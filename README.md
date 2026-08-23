@@ -12,9 +12,10 @@ normalization, hashing, certificate inspection, timestamps, entropy analysis,
 and regex utilities into one Linux terminal application.
 
 > [!WARNING]
-> **Alpha / early draft.** Banshee is under active development and its commands,
-> output formats, rule syntax, and limits may change before a stable release.
-> Treat its findings as analyst assistance—not as a final security verdict.
+> **Alpha / early draft.** Banshee is under active development. Expect incomplete,
+> broken, or incorrect behavior; commands, output formats, rule syntax, and
+> limits may change before a stable release. Treat its findings as analyst
+> assistance—not as a final security verdict.
 
 ## Quick guide
 
@@ -191,7 +192,7 @@ pattern = "4D 5A ?? ??"
 
 Use `min_matches = 2` to require repeated occurrences, or `case_insensitive = true` with regex and literal rules. Unknown TOML fields, duplicate IDs, invalid patterns, and unsupported schema versions are rejected by `rules validate` and `rules scan`.
 
-## Security notes
+## Security & responsible use
 
 - `jwt inspect` never claims signature verification.
 - `jwt verify` requires an explicit expected algorithm to reduce algorithm-confusion risk.
@@ -202,13 +203,7 @@ Use `min_matches = 2` to require repeated occurrences, or `case_insensitive = tr
 - Archive inspection reports metadata and suspicious paths but deliberately does not extract files or execute payloads.
 - Local rule matches are triage signals, not proof that a payload is malicious; review offsets and context before acting.
 
-## Language breakdown
-
-GitHub currently reports the codebase as **Rust 99.7%** and **Shell 0.3%** by
-source bytes. The repository's language indicator updates automatically as the
-project evolves.
-
-## Responsible use & disclaimer
+### Authorized use and liability
 
 Banshee is intended for defensive research, education, incident response, and
 analysis of systems or data you own or are explicitly authorized to assess. Do
@@ -220,6 +215,12 @@ applicable laws, regulations, and organizational policies. The software is
 provided "as is", without warranty of any kind. Its authors and contributors
 accept no liability for misuse or for any loss, damage, or legal consequence
 arising from its use, to the fullest extent permitted by law.
+
+## Language breakdown
+
+GitHub currently reports the codebase as **Rust 99.7%** and **Shell 0.3%** by
+source bytes. The repository's language indicator updates automatically as the
+project evolves.
 
 ## License
 
