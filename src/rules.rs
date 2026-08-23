@@ -291,7 +291,9 @@ fn parse_hex_pattern(pattern: &str) -> Result<Vec<Option<u8>>> {
     }
     compact
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             if pair == b"??" {
                 return Ok(None);
