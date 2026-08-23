@@ -2,6 +2,10 @@
 
 # Banshee
 
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-f59e0b)](https://github.com/dRafaleD/Banshee)
+[![Primary language: Rust](https://img.shields.io/badge/primary%20language-Rust-dea584)](https://github.com/dRafaleD/Banshee)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+
 Banshee is an offline, pipe-friendly security analysis toolkit written in Rust.
 It aims to bring common CyberChef-style transformations, JWT inspection, IOC
 normalization, hashing, certificate inspection, timestamps, entropy analysis,
@@ -197,3 +201,27 @@ Use `min_matches = 2` to require repeated occurrences, or `case_insensitive = tr
 - `cert chain` validates only the supplied chain; it does not establish trust against an OS trust store or query OCSP/CRL services.
 - Archive inspection reports metadata and suspicious paths but deliberately does not extract files or execute payloads.
 - Local rule matches are triage signals, not proof that a payload is malicious; review offsets and context before acting.
+
+## Language breakdown
+
+GitHub currently reports the codebase as **Rust 99.7%** and **Shell 0.3%** by
+source bytes. The repository's language indicator updates automatically as the
+project evolves.
+
+## Responsible use & disclaimer
+
+Banshee is intended for defensive research, education, incident response, and
+analysis of systems or data you own or are explicitly authorized to assess. Do
+not use it to access, probe, disrupt, or analyze third-party systems or data
+without permission.
+
+You are solely responsible for how you use this software and for complying with
+applicable laws, regulations, and organizational policies. The software is
+provided "as is", without warranty of any kind. Its authors and contributors
+accept no liability for misuse or for any loss, damage, or legal consequence
+arising from its use, to the fullest extent permitted by law.
+
+## License
+
+Distributed under the [MIT License](LICENSE). See [LICENSE](LICENSE) for the
+full text.
