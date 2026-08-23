@@ -1,0 +1,25 @@
+version = 1
+
+[[rules]]
+id = "powershell-encoded-command"
+description = "PowerShell invocation using an encoded command"
+severity = "high"
+kind = "regex"
+pattern = '(?i)powershell(?:\.exe)?\s+[^\r\n]{0,120}-(?:enc|encodedcommand)\b'
+tags = ["powershell", "execution"]
+
+[[rules]]
+id = "private-key-marker"
+description = "PEM private-key material"
+severity = "critical"
+kind = "literal"
+pattern = "-----BEGIN PRIVATE KEY-----"
+tags = ["credential", "secret"]
+
+[[rules]]
+id = "mz-with-wildcards"
+description = "DOS MZ marker followed by two variable bytes"
+severity = "low"
+kind = "hex"
+pattern = "4D 5A ?? ??"
+tags = ["executable"]
