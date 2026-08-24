@@ -1,4 +1,4 @@
-![Banshee — offline security analysis toolkit](assets/banshee-banner-green-preview.png)
+![Banshee — offline security analysis toolkit](assets/banshee-banner-green-animated-v3.gif)
 
 # Banshee
 
