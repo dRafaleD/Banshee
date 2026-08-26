@@ -187,12 +187,16 @@ pub fn print_report(report: &AnalysisReport, json: bool) -> Result<()> {
                 paint(&layer.kind.to_string(), Tone::Info),
                 layer.confidence * 100.0
             )?;
-            writeln!(output, "      -> {}", preview(&layer.output, 160))?;
+            writeln!(
+                output,
+                "      -> {}",
+                terminal_safe(&preview(&layer.output, 160))
+            )?;
         }
     }
 
     writeln!(output, "\n{}", paint("Final result:", Tone::Heading))?;
-    writeln!(output, "{}", report.final_value)?;
+    writeln!(output, "{}", terminal_safe(&report.final_value))?;
     writeln!(
         output,
         "\n{} {:.0}%",
@@ -207,10 +211,10 @@ pub fn print_report(report: &AnalysisReport, json: bool) -> Result<()> {
                 output,
                 "  - {}: {}",
                 paint(&finding.kind.to_string(), Tone::Danger),
-                finding.value
+                terminal_safe(&finding.value)
             )?;
             if let Some(detail) = &finding.detail {
-                write!(output, " ({detail})")?;
+                write!(output, " ({})", terminal_safe(detail))?;
             }
             writeln!(output)?;
         }
@@ -335,7 +339,7 @@ pub fn print_ioc_report(
                     output,
                     "{}\t{}\tcount={}\tlines={}-{}",
                     paint(&ioc.kind.to_string(), ioc_tone(ioc.kind)),
-                    value,
+                    terminal_safe(&value),
                     ioc.occurrences,
                     ioc.first_line,
                     ioc.last_line
@@ -540,7 +544,26 @@ pub fn write_raw(bytes: &[u8]) -> Result<()> {
 }
 
 pub fn write_line(value: &str) -> Result<()> {
-    writeln!(output_writer()?, "{value}").context("failed to write output")
+    writeln!(output_writer()?, "{}", terminal_safe(value)).context("failed to write output")
+}
+
+/// Escapes terminal control and bidirectional formatting characters in untrusted text.
+/// JSON and raw-output modes intentionally preserve their original bytes.
+pub fn terminal_safe(value: &str) -> String {
+    let mut safe = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control()
+            || matches!(
+                character,
+                '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            )
+        {
+            safe.extend(character.escape_unicode());
+        } else {
+            safe.push(character);
+        }
+    }
+    safe
 }
 
 pub fn with_output<T>(callback: impl FnOnce(&mut dyn Write) -> Result<T>) -> Result<T> {
@@ -584,6 +607,14 @@ mod tests {
         assert_eq!(
             paint_with("Banshee", Tone::Heading, true),
             "\x1b[1;36mBanshee\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn escapes_terminal_control_sequences() {
+        assert_eq!(
+            super::terminal_safe("safe\u{1b}[2J\ntext"),
+            "safe\\u{1b}[2J\\u{a}text"
         );
     }
 }

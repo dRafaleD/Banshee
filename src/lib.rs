@@ -184,8 +184,22 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     regex_tool::test(&args.pattern, &value, args.case_insensitive, args.multiline)?;
                 output::print_json_or(&report, args.json, |output| {
                     writeln!(output, "Matches: {}", report.total)?;
+                    if report.truncated {
+                        writeln!(output, "Match list truncated at safety limit")?;
+                    }
                     for found in &report.matches {
-                        writeln!(output, "[{}..{}]\t{}", found.start, found.end, found.value)?;
+                        writeln!(
+                            output,
+                            "[{}..{}]\t{}{}",
+                            found.start,
+                            found.end,
+                            output::terminal_safe(&found.value),
+                            if found.value_truncated {
+                                " [truncated]"
+                            } else {
+                                ""
+                            }
+                        )?;
                     }
                     Ok(())
                 })?;
@@ -210,9 +224,13 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                         "Format: {} / X.509 v{}",
                         report.format, report.version
                     )?;
-                    writeln!(output, "Subject: {}", report.subject)?;
-                    writeln!(output, "Issuer: {}", report.issuer)?;
-                    writeln!(output, "Serial: {}", report.serial)?;
+                    writeln!(
+                        output,
+                        "Subject: {}",
+                        output::terminal_safe(&report.subject)
+                    )?;
+                    writeln!(output, "Issuer: {}", output::terminal_safe(&report.issuer))?;
+                    writeln!(output, "Serial: {}", output::terminal_safe(&report.serial))?;
                     writeln!(
                         output,
                         "Validity: {} -> {}",
@@ -257,7 +275,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     }
                     writeln!(output, "SHA-256: {}", report.sha256_fingerprint)?;
                     for name in &report.subject_alt_names {
-                        writeln!(output, "SAN: {name}")?;
+                        writeln!(output, "SAN: {}", output::terminal_safe(name))?;
                     }
                     Ok(())
                 })?;
@@ -269,8 +287,16 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 output::print_json_or(&report, args.json, |output| {
                     writeln!(output, "Certificates: {}", report.certificates.len())?;
                     for (index, certificate) in report.certificates.iter().enumerate() {
-                        writeln!(output, "[{index}] Subject: {}", certificate.subject)?;
-                        writeln!(output, "    Issuer: {}", certificate.issuer)?;
+                        writeln!(
+                            output,
+                            "[{index}] Subject: {}",
+                            output::terminal_safe(&certificate.subject)
+                        )?;
+                        writeln!(
+                            output,
+                            "    Issuer: {}",
+                            output::terminal_safe(&certificate.issuer)
+                        )?;
                         writeln!(
                             output,
                             "    Valid now: {}; CA: {}",
@@ -323,7 +349,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 let report = file_inspect::inspect_file(&args.path, args.max_entries)?;
                 has_findings |= !report.findings.is_empty();
                 output::print_json_or(&report, args.json, |output| {
-                    writeln!(output, "Path: {}", report.path)?;
+                    writeln!(output, "Path: {}", output::terminal_safe(&report.path))?;
                     writeln!(output, "Format: {}", report.format)?;
                     writeln!(output, "Size: {} bytes", report.size)?;
                     writeln!(output, "SHA-256: {}", report.sha256)?;
@@ -361,7 +387,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 output,
                                 "{}\t{}\t{} bytes{}",
                                 entry.kind,
-                                entry.name,
+                                output::terminal_safe(&entry.name),
                                 entry.size,
                                 if entry.path_safe {
                                     ""
@@ -372,7 +398,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                         }
                     }
                     for finding in &report.findings {
-                        writeln!(output, "Finding: {finding}")?;
+                        writeln!(output, "Finding: {}", output::terminal_safe(finding))?;
                     }
                     Ok(())
                 })?;
@@ -389,7 +415,10 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                         writeln!(
                             output,
                             "{}\t{}\t{}\t{}",
-                            rule.id, rule.severity, rule.kind, rule.description
+                            rule.id,
+                            rule.severity,
+                            rule.kind,
+                            output::terminal_safe(&rule.description)
                         )?;
                     }
                     Ok(())
@@ -414,13 +443,19 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                             if matched.total_matches == 1 { "" } else { "es" }
                         )?;
                         if !matched.description.is_empty() {
-                            writeln!(output, "    {}", matched.description)?;
+                            writeln!(
+                                output,
+                                "    {}",
+                                output::terminal_safe(&matched.description)
+                            )?;
                         }
                         for sample in &matched.samples {
                             writeln!(
                                 output,
                                 "    @{} +{}\t{}",
-                                sample.offset, sample.length, sample.preview
+                                sample.offset,
+                                sample.length,
+                                output::terminal_safe(&sample.preview)
                             )?;
                         }
                         if matched.truncated {
@@ -455,7 +490,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 .first()
                                 .map(|layer| layer.kind.to_string())
                                 .unwrap_or_else(|| "structured indicator".to_owned()),
-                            item.report.final_value
+                            output::terminal_safe(&item.report.final_value)
                         )?;
                     }
                     Ok(())
@@ -498,7 +533,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     }
                     writeln!(output, "Final bytes: {}", result.report.final_bytes)?;
                     match &result.report.final_text {
-                        Some(value) => writeln!(output, "Final result:\n{value}"),
+                        Some(value) => {
+                            writeln!(output, "Final result:\n{}", output::terminal_safe(value))
+                        }
                         None => writeln!(
                             output,
                             "Final result is binary/non-UTF-8; use --raw or --json (Base64 output)."
@@ -536,13 +573,19 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                     }
                                 )?;
                                 for ioc in &event.report.iocs.iocs {
-                                    writeln!(output, "{}\t{}", ioc.kind, ioc.value)?;
+                                    writeln!(
+                                        output,
+                                        "{}\t{}",
+                                        ioc.kind,
+                                        output::terminal_safe(&ioc.value)
+                                    )?;
                                 }
                                 for analysis in &event.report.analyses {
                                     writeln!(
                                         output,
                                         "line {}\t{}",
-                                        analysis.line, analysis.report.final_value
+                                        analysis.line,
+                                        output::terminal_safe(&analysis.report.final_value)
                                     )?;
                                 }
                                 Ok(())
