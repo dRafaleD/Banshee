@@ -22,11 +22,11 @@ pub struct Cli {
     #[arg(long, global = true, value_enum, default_value_t = crate::output::ColorMode::Auto)]
     pub color: crate::output::ColorMode,
 
-    /// Write command output to a new local file instead of stdout
+    /// Write command output to a new local path; evidence create uses a directory
     #[arg(short, long, global = true, value_name = "PATH")]
     pub output: Option<PathBuf>,
 
-    /// Allow --output to overwrite an existing file
+    /// Allow --output to replace an existing target where supported
     #[arg(long, global = true, requires = "output")]
     pub force: bool,
 
@@ -66,6 +66,14 @@ pub enum Command {
     Rules(RulesArgs),
     /// Automatically analyze tokens and IOCs in bulk input
     Analyze(AnalyzeArgs),
+    /// Build a unified offline analysis report for one local file
+    Report(ReportArgs),
+    /// Scan a local file or directory with bounded offline analysis
+    Scan(ScanArgs),
+    /// Create or verify a deterministic offline evidence bundle
+    Evidence(EvidenceArgs),
+    /// Compare two report JSON files or verified evidence bundles
+    Diff(DiffArgs),
     /// Encode text using a selected format
     Encode(EncodeArgs),
     /// Decode data using a selected format
@@ -197,6 +205,10 @@ pub struct ExtractArgs {
     #[arg(long)]
     pub mac: bool,
 
+    /// Extract only secret and private-key candidates
+    #[arg(long)]
+    pub secret: bool,
+
     /// Suppress IOCs matching entries in a local known-safe list; supports * wildcards
     #[arg(long, value_name = "PATH")]
     pub allowlist: Vec<PathBuf>,
@@ -224,6 +236,26 @@ pub struct ExtractArgs {
     /// Defang text output for safer sharing (for example, hxxps://host[.]tld)
     #[arg(long)]
     pub defang: bool,
+
+    /// Include this many surrounding lines for each recorded location
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=5))]
+    pub context: u8,
+
+    /// Maximum characters retained for each context line
+    #[arg(long, default_value_t = 240, value_parser = parse_context_chars)]
+    pub max_context_chars: usize,
+
+    /// Maximum recorded locations per unique IOC or secret
+    #[arg(long, default_value_t = 20, value_parser = parse_locations)]
+    pub max_locations: usize,
+
+    /// Maximum total candidate matches inspected
+    #[arg(long, default_value_t = 10_000, value_parser = parse_matches)]
+    pub max_matches: usize,
+
+    /// Reveal full secret candidates in output and context (unsafe for sharing)
+    #[arg(long)]
+    pub reveal_secrets: bool,
 }
 
 #[derive(Debug, Args)]
@@ -479,6 +511,148 @@ pub struct AnalyzeArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ReportArgs {
+    /// Local file to analyze
+    pub path: PathBuf,
+
+    /// Optional local TOML rule file
+    #[arg(long, value_name = "PATH")]
+    pub rules: Option<PathBuf>,
+
+    /// Report output format
+    #[arg(long, value_enum, default_value_t = crate::report::ReportFormat::Text)]
+    pub format: crate::report::ReportFormat,
+
+    /// Maximum archive entries to list
+    #[arg(long, default_value_t = 10_000, value_parser = parse_max_tokens)]
+    pub max_entries: usize,
+
+    /// Maximum number of unique content tokens to inspect
+    #[arg(long, default_value_t = 10_000, value_parser = parse_max_tokens)]
+    pub max_tokens: usize,
+
+    /// Maximum number of nested decoding layers
+    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(1..=32))]
+    pub max_depth: u8,
+}
+
+#[derive(Debug, Args)]
+pub struct ScanArgs {
+    /// Local file or directory to scan
+    pub path: PathBuf,
+
+    /// Descend into subdirectories
+    #[arg(long)]
+    pub recursive: bool,
+
+    /// Optional local TOML rule file applied to every selected file
+    #[arg(long, value_name = "PATH")]
+    pub rules: Option<PathBuf>,
+
+    /// Include matching relative paths; supports *, **, and ?
+    #[arg(long, value_name = "GLOB")]
+    pub include: Vec<String>,
+
+    /// Exclude matching relative paths; supports *, **, and ?
+    #[arg(long, value_name = "GLOB")]
+    pub exclude: Vec<String>,
+
+    /// Scan output format
+    #[arg(long, value_enum, default_value_t = crate::scan::ScanFormat::Text)]
+    pub format: crate::scan::ScanFormat,
+
+    /// Maximum regular files considered, including filtered files
+    #[arg(long, default_value_t = 10_000, value_parser = parse_max_tokens)]
+    pub max_files: usize,
+
+    /// Maximum size of an individual file (bytes or KiB/MiB/GiB suffix)
+    #[arg(long, default_value = "64MiB", value_parser = parse_file_size)]
+    pub max_file_size: u64,
+
+    /// Maximum combined size analyzed (bytes or KiB/MiB/GiB suffix)
+    #[arg(long, default_value = "1GiB", value_parser = parse_total_size)]
+    pub max_total_size: u64,
+
+    /// Maximum archive entries listed per file
+    #[arg(long, default_value_t = 10_000, value_parser = parse_max_tokens)]
+    pub max_entries: usize,
+
+    /// Maximum unique content tokens inspected per file
+    #[arg(long, default_value_t = 10_000, value_parser = parse_max_tokens)]
+    pub max_tokens: usize,
+
+    /// Maximum nested decoding layers per file
+    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(1..=32))]
+    pub max_depth: u8,
+}
+
+#[derive(Debug, Args)]
+pub struct EvidenceArgs {
+    #[command(subcommand)]
+    pub command: EvidenceCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvidenceCommand {
+    /// Create a complete evidence directory and write its manifest last
+    Create(EvidenceCreateArgs),
+    /// Verify bundle file sizes and SHA-256 hashes without network access
+    Verify(EvidenceVerifyArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Requires --output BUNDLE_DIR. The source sample is omitted unless --include-sample is supplied."
+)]
+pub struct EvidenceCreateArgs {
+    /// Local source file to analyze
+    pub path: PathBuf,
+
+    /// Optional local TOML rule file
+    #[arg(long, value_name = "PATH")]
+    pub rules: Option<PathBuf>,
+
+    /// Explicitly copy the source sample into the bundle as source-sample.bin
+    #[arg(long)]
+    pub include_sample: bool,
+
+    /// Maximum archive entries to list
+    #[arg(long, default_value_t = 10_000, value_parser = parse_max_tokens)]
+    pub max_entries: usize,
+
+    /// Maximum number of unique content tokens to inspect
+    #[arg(long, default_value_t = 10_000, value_parser = parse_max_tokens)]
+    pub max_tokens: usize,
+
+    /// Maximum number of nested decoding layers
+    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(1..=32))]
+    pub max_depth: u8,
+}
+
+#[derive(Debug, Args)]
+pub struct EvidenceVerifyArgs {
+    /// Existing evidence bundle directory
+    pub path: PathBuf,
+
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DiffArgs {
+    /// Earlier report JSON file or evidence bundle directory
+    pub left: PathBuf,
+
+    /// Later report JSON file or evidence bundle directory
+    pub right: PathBuf,
+
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct EncodeArgs {
     /// Output encoding
     #[arg(value_enum)]
@@ -582,6 +756,61 @@ fn parse_max_tokens(value: &str) -> Result<usize, String> {
         return Err("must be between 1 and 1000000".to_owned());
     }
     Ok(parsed)
+}
+
+fn parse_context_chars(value: &str) -> Result<usize, String> {
+    parse_usize_range(value, 32, 4096)
+}
+
+fn parse_locations(value: &str) -> Result<usize, String> {
+    parse_usize_range(value, 1, 100)
+}
+
+fn parse_matches(value: &str) -> Result<usize, String> {
+    parse_usize_range(value, 1, 100_000)
+}
+
+fn parse_usize_range(value: &str, minimum: usize, maximum: usize) -> Result<usize, String> {
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| "must be a positive integer".to_owned())?;
+    if !(minimum..=maximum).contains(&parsed) {
+        return Err(format!("must be between {minimum} and {maximum}"));
+    }
+    Ok(parsed)
+}
+
+fn parse_file_size(value: &str) -> Result<u64, String> {
+    parse_size(value, 256 * 1024 * 1024, "256 MiB")
+}
+
+fn parse_total_size(value: &str) -> Result<u64, String> {
+    parse_size(value, 16 * 1024 * 1024 * 1024, "16 GiB")
+}
+
+fn parse_size(value: &str, maximum: u64, maximum_label: &str) -> Result<u64, String> {
+    let normalized = value.trim();
+    let split = normalized
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(normalized.len());
+    let (number, suffix) = normalized.split_at(split);
+    let number = number
+        .parse::<u64>()
+        .map_err(|_| "must start with a positive integer".to_owned())?;
+    let multiplier = match suffix.to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "kib" => 1024,
+        "mib" => 1024 * 1024,
+        "gib" => 1024 * 1024 * 1024,
+        _ => return Err("suffix must be B, KiB, MiB, or GiB".to_owned()),
+    };
+    let bytes = number
+        .checked_mul(multiplier)
+        .ok_or_else(|| "size is too large".to_owned())?;
+    if bytes == 0 || bytes > maximum {
+        return Err(format!("must be between 1 byte and {maximum_label}"));
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug, Args)]

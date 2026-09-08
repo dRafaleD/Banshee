@@ -19,7 +19,7 @@ clap_mangen = "0.2"
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 html-escape = "0.2"
 idna = "1.1"
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
+jsonwebtoken = { version = "9.3.1", default-features = false, features = ["use_pem"] }
 md4 = "0.10"
 md-5 = "0.10"
 percent-encoding = "2.3"

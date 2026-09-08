@@ -29,6 +29,10 @@ banshee recipe 'rot13|encode:base32' 'Uryyb'
 cat access.log | banshee extract
 cat access.log | banshee extract --url --domain --defang
 banshee extract --hash --json --file suspicious.log
+banshee extract --context 2 --file suspicious.log
+banshee extract --secret --context 1 --file application.log
+# Unsafe opt-in for controlled local review only:
+banshee extract --secret --reveal-secrets --file application.log
 banshee hash calculate --algorithm sha256 "hello"
 banshee hash identify d41d8cd98f00b204e9800998ecf8427e
 banshee hash crack HASH --algorithm md5 --wordlist words.txt
@@ -59,7 +63,23 @@ banshee encode base64 --file payload.bin
 banshee file inspect suspicious.zip
 banshee file inspect package.tar.xz --json
 banshee file inspect suspicious.exe
+banshee file inspect application.elf --json
+# PE certificate-table presence is metadata only; signature trust is not verified.
+banshee report suspicious.exe
+banshee report suspicious.zip --format json --output report.json
+banshee report suspicious.bin --rules examples/rules.toml --format markdown --output report.md
+banshee evidence create suspicious.bin --rules examples/rules.toml --output case-evidence
+banshee evidence verify case-evidence
+# Explicit opt-in only when the original sample must be preserved in the bundle.
+banshee evidence create suspicious.bin --include-sample --output full-evidence
+banshee diff baseline-report.json current-report.json
+banshee diff baseline-evidence current-evidence --json
+banshee scan ./samples
+banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
+banshee scan ./samples --recursive --max-file-size 32MiB --max-total-size 512MiB
+banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
 banshee rules validate examples/rules.toml
+banshee rules validate examples/rules.toml --json
 cat suspicious.log | banshee rules scan --rules examples/rules.toml
 banshee rules scan --rules examples/rules.toml --file payload.bin --fail-on-findings
 banshee watch /var/log/auth.log

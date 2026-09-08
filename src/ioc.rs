@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -9,7 +9,11 @@ use regex::Regex;
 use serde::Serialize;
 use url::Url;
 
-#[derive(Debug, Clone, Default)]
+const DEFAULT_MAX_LOCATIONS: usize = 20;
+const DEFAULT_MAX_MATCHES: usize = 10_000;
+const DEFAULT_MAX_CONTEXT_CHARS: usize = 240;
+
+#[derive(Debug, Clone)]
 pub struct ExtractOptions {
     pub include_ip: bool,
     pub include_domain: bool,
@@ -17,9 +21,39 @@ pub struct ExtractOptions {
     pub include_hash: bool,
     pub include_email: bool,
     pub include_mac: bool,
+    pub include_secret: bool,
     pub allowlist: PatternList,
     pub denylist: PatternList,
     pub sort: IocSort,
+    pub source: String,
+    pub context_lines: u8,
+    pub max_context_chars: usize,
+    pub max_locations: usize,
+    pub max_matches: usize,
+    pub reveal_secrets: bool,
+}
+
+impl Default for ExtractOptions {
+    fn default() -> Self {
+        Self {
+            include_ip: false,
+            include_domain: false,
+            include_url: false,
+            include_hash: false,
+            include_email: false,
+            include_mac: false,
+            include_secret: false,
+            allowlist: PatternList::default(),
+            denylist: PatternList::default(),
+            sort: IocSort::default(),
+            source: "input".to_owned(),
+            context_lines: 0,
+            max_context_chars: DEFAULT_MAX_CONTEXT_CHARS,
+            max_locations: DEFAULT_MAX_LOCATIONS,
+            max_matches: DEFAULT_MAX_MATCHES,
+            reveal_secrets: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -71,6 +105,7 @@ impl ExtractOptions {
             && !self.include_hash
             && !self.include_email
             && !self.include_mac
+            && !self.include_secret
         {
             return true;
         }
@@ -82,11 +117,12 @@ impl ExtractOptions {
             IocKind::Hash => self.include_hash,
             IocKind::Email => self.include_email,
             IocKind::Mac => self.include_mac,
+            IocKind::Secret | IocKind::PrivateKey => self.include_secret,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IocKind {
     Domain,
@@ -95,6 +131,8 @@ pub enum IocKind {
     Ipv4,
     Ipv6,
     Mac,
+    PrivateKey,
+    Secret,
     Url,
 }
 
@@ -107,6 +145,8 @@ impl std::fmt::Display for IocKind {
             Self::Ipv4 => "ipv4",
             Self::Ipv6 => "ipv6",
             Self::Mac => "mac",
+            Self::PrivateKey => "private_key",
+            Self::Secret => "secret",
             Self::Url => "url",
         };
         formatter.write_str(label)
@@ -117,32 +157,69 @@ impl std::fmt::Display for IocKind {
 pub struct Ioc {
     pub kind: IocKind,
     pub value: String,
+    pub source: String,
+    pub redacted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub occurrences: usize,
-    pub first_line: usize,
-    pub last_line: usize,
+    pub first_line: Option<usize>,
+    pub last_line: Option<usize>,
+    pub first_column: Option<usize>,
+    pub locations_truncated: bool,
+    pub locations: Vec<IocLocation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IocLocation {
+    pub line: usize,
+    pub column: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub context: Vec<ContextLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContextLine {
+    pub line: usize,
+    pub matched: bool,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IocReport {
     pub input_bytes: usize,
+    pub source: String,
+    pub positions_available: bool,
     pub total: usize,
     pub total_occurrences: usize,
+    pub match_limit_reached: bool,
     pub iocs: Vec<Ioc>,
 }
 
 pub fn extract(input: &str, options: ExtractOptions) -> IocReport {
-    let refanged = refang(input);
-    let mut collector = IocCollector::default();
+    let mapped = refang_with_map(input);
+    let mut collector = IocCollector::new(input, &mapped.offsets, &options);
 
-    extract_urls(&refanged, &mut collector);
-    extract_ips(&refanged, &mut collector);
-    extract_hashes(&refanged, &mut collector);
-    extract_emails(&refanged, &mut collector);
-    extract_macs(&refanged, &mut collector);
-    extract_domains(&refanged, &mut collector);
+    extract_secrets(&mapped.text, &mut collector);
+    if !collector.is_full() {
+        extract_urls(&mapped.text, &mut collector);
+    }
+    if !collector.is_full() {
+        extract_ips(&mapped.text, &mut collector);
+    }
+    if !collector.is_full() {
+        extract_hashes(&mapped.text, &mut collector);
+    }
+    if !collector.is_full() {
+        extract_emails(&mapped.text, &mut collector);
+    }
+    if !collector.is_full() {
+        extract_macs(&mapped.text, &mut collector);
+    }
+    if !collector.is_full() {
+        extract_domains(&mapped.text, &mut collector);
+    }
 
+    let match_limit_reached = collector.match_limit_reached;
     let mut iocs = collector
         .into_values()
         .filter(|ioc| {
@@ -151,6 +228,14 @@ pub fn extract(input: &str, options: ExtractOptions) -> IocReport {
                 && (options.denylist.is_empty() || options.denylist.matches(&ioc.value))
         })
         .collect::<Vec<_>>();
+    if !options.reveal_secrets {
+        for ioc in &mut iocs {
+            if matches!(ioc.kind, IocKind::Secret | IocKind::PrivateKey) {
+                ioc.value = mask_secret(&ioc.value, ioc.kind);
+                ioc.redacted = true;
+            }
+        }
+    }
     match options.sort {
         IocSort::Kind => {}
         IocSort::Value => iocs.sort_by(|left, right| {
@@ -170,8 +255,11 @@ pub fn extract(input: &str, options: ExtractOptions) -> IocReport {
 
     IocReport {
         input_bytes: input.len(),
+        source: options.source,
+        positions_available: true,
         total: iocs.len(),
         total_occurrences,
+        match_limit_reached,
         iocs,
     }
 }
@@ -185,54 +273,144 @@ pub fn defang(ioc: &Ioc) -> String {
             .replace('.', "[.]"),
         IocKind::Domain | IocKind::Ipv4 => ioc.value.replace('.', "[.]"),
         IocKind::Email => ioc.value.replace('@', "[@]").replace('.', "[.]"),
-        IocKind::Ipv6 | IocKind::Hash | IocKind::Mac => ioc.value.clone(),
+        IocKind::Ipv6 | IocKind::Hash | IocKind::Mac | IocKind::PrivateKey | IocKind::Secret => {
+            ioc.value.clone()
+        }
     }
 }
 
-fn refang(input: &str) -> String {
-    static DEFANGED_SCHEME: OnceLock<Regex> = OnceLock::new();
-    let scheme = DEFANGED_SCHEME
-        .get_or_init(|| Regex::new(r"(?i)\b(hxxps?)(?:\[:\]//|\[://\]|://)").expect("valid regex"));
-    let schemes_fixed = scheme.replace_all(input, |captures: &regex::Captures<'_>| {
-        if captures[1].eq_ignore_ascii_case("hxxps") {
-            "https://"
-        } else {
-            "http://"
+struct MappedText {
+    text: String,
+    offsets: Vec<usize>,
+}
+
+fn refang_with_map(input: &str) -> MappedText {
+    let replacements = [
+        ("hxxps[:]//", "https://", true),
+        ("hxxps[://]", "https://", true),
+        ("hxxps://", "https://", true),
+        ("hxxp[:]//", "http://", true),
+        ("hxxp[://]", "http://", true),
+        ("hxxp://", "http://", true),
+        ("[.]", ".", false),
+        ("(.)", ".", false),
+        ("{.}", ".", false),
+        ("[@]", "@", false),
+        ("(@)", "@", false),
+    ];
+    let mut text = String::with_capacity(input.len());
+    let mut offsets = Vec::with_capacity(input.len());
+    let mut index = 0;
+    while index < input.len() {
+        let remaining = &input[index..];
+        let replacement = replacements.iter().find(|(pattern, _, insensitive)| {
+            remaining.len() >= pattern.len()
+                && if *insensitive {
+                    remaining.as_bytes()[..pattern.len()].eq_ignore_ascii_case(pattern.as_bytes())
+                } else {
+                    remaining.as_bytes().starts_with(pattern.as_bytes())
+                }
+        });
+        if let Some((pattern, value, _)) = replacement {
+            text.push_str(value);
+            offsets.extend(std::iter::repeat_n(index, value.len()));
+            index += pattern.len();
+            continue;
         }
-    });
-
-    schemes_fixed
-        .replace("[.]", ".")
-        .replace("(.)", ".")
-        .replace("{.}", ".")
-        .replace("[@]", "@")
-        .replace("(@)", "@")
+        let character = remaining
+            .chars()
+            .next()
+            .expect("remaining text is non-empty");
+        text.push(character);
+        offsets.extend((0..character.len_utf8()).map(|offset| index + offset));
+        index += character.len_utf8();
+    }
+    MappedText { text, offsets }
 }
 
-#[derive(Debug, Default)]
-struct IocCollector {
+#[derive(Debug)]
+struct IocCollector<'a> {
     iocs: BTreeMap<(IocKind, String), Ioc>,
+    seen: HashSet<(IocKind, String, usize)>,
+    original: &'a str,
+    normalized_offsets: &'a [usize],
+    line_starts: Vec<usize>,
+    private_key_ranges: Vec<(usize, usize)>,
+    source: String,
+    context_lines: u8,
+    max_context_chars: usize,
+    max_locations: usize,
+    max_matches: usize,
+    matches_seen: usize,
+    match_limit_reached: bool,
+    reveal_secrets: bool,
 }
 
-impl IocCollector {
-    fn record(
-        &mut self,
-        input: &str,
-        offset: usize,
-        kind: IocKind,
-        value: String,
-        detail: Option<String>,
-    ) {
-        let line = input[..offset]
-            .bytes()
-            .filter(|byte| *byte == b'\n')
+impl<'a> IocCollector<'a> {
+    fn new(original: &'a str, normalized_offsets: &'a [usize], options: &ExtractOptions) -> Self {
+        let mut line_starts = vec![0];
+        line_starts.extend(
+            original
+                .bytes()
+                .enumerate()
+                .filter_map(|(index, byte)| (byte == b'\n').then_some(index + 1)),
+        );
+        Self {
+            iocs: BTreeMap::new(),
+            seen: HashSet::new(),
+            original,
+            normalized_offsets,
+            line_starts,
+            private_key_ranges: private_key_ranges(original),
+            source: options.source.clone(),
+            context_lines: options.context_lines,
+            max_context_chars: options.max_context_chars.max(32),
+            max_locations: options.max_locations.max(1),
+            max_matches: options.max_matches.max(1),
+            matches_seen: 0,
+            match_limit_reached: false,
+            reveal_secrets: options.reveal_secrets,
+        }
+    }
+
+    fn record(&mut self, offset: usize, kind: IocKind, value: String, detail: Option<String>) {
+        let original_offset = self
+            .normalized_offsets
+            .get(offset)
+            .copied()
+            .unwrap_or(self.original.len());
+        if !self.seen.insert((kind, value.clone(), original_offset)) {
+            return;
+        }
+        if self.matches_seen >= self.max_matches {
+            self.match_limit_reached = true;
+            return;
+        }
+        self.matches_seen += 1;
+        let line_index = self
+            .line_starts
+            .partition_point(|start| *start <= original_offset)
+            - 1;
+        let line = line_index + 1;
+        let column = self.original[self.line_starts[line_index]..original_offset]
+            .chars()
             .count()
             + 1;
+        let location = IocLocation {
+            line,
+            column,
+            context: self.context(line_index),
+        };
         let key = (kind, value.clone());
         match self.iocs.get_mut(&key) {
             Some(ioc) => {
                 ioc.occurrences += 1;
-                ioc.last_line = line;
+                ioc.last_line = Some(line);
+                if ioc.locations.len() < self.max_locations {
+                    ioc.locations.push(location);
+                } else {
+                    ioc.locations_truncated = true;
+                }
             }
             None => {
                 self.iocs.insert(
@@ -240,14 +418,64 @@ impl IocCollector {
                     Ioc {
                         kind,
                         value,
+                        source: self.source.clone(),
+                        redacted: false,
                         detail,
                         occurrences: 1,
-                        first_line: line,
-                        last_line: line,
+                        first_line: Some(line),
+                        last_line: Some(line),
+                        first_column: Some(column),
+                        locations_truncated: false,
+                        locations: vec![location],
                     },
                 );
             }
         }
+    }
+
+    fn is_full(&mut self) -> bool {
+        if self.matches_seen >= self.max_matches {
+            self.match_limit_reached = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn context(&self, matched_line_index: usize) -> Vec<ContextLine> {
+        if self.context_lines == 0 {
+            return Vec::new();
+        }
+        let radius = usize::from(self.context_lines);
+        let start = matched_line_index.saturating_sub(radius);
+        let end = (matched_line_index + radius + 1).min(self.line_starts.len());
+        (start..end)
+            .map(|line_index| {
+                let line_start = self.line_starts[line_index];
+                let line_end = self
+                    .line_starts
+                    .get(line_index + 1)
+                    .copied()
+                    .unwrap_or(self.original.len());
+                let raw = self.original[line_start..line_end].trim_end_matches(['\r', '\n']);
+                let private_key_material = self
+                    .private_key_ranges
+                    .iter()
+                    .any(|(start, end)| line_start < *end && line_end > *start);
+                let safe = if private_key_material && !self.reveal_secrets {
+                    "[PRIVATE KEY MATERIAL REDACTED]".to_owned()
+                } else if self.reveal_secrets {
+                    raw.to_owned()
+                } else {
+                    redact_secrets(raw)
+                };
+                ContextLine {
+                    line: line_index + 1,
+                    matched: line_index == matched_line_index,
+                    text: truncate_chars(&safe, self.max_context_chars),
+                }
+            })
+            .collect()
     }
 
     fn into_values(self) -> impl Iterator<Item = Ioc> {
@@ -261,6 +489,9 @@ fn extract_urls(input: &str, iocs: &mut IocCollector) {
         .get_or_init(|| Regex::new(r#"(?i)\bhttps?://[^\s<>\"']+"#).expect("valid regex"));
 
     for matched in pattern.find_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
         let candidate = trim_punctuation(matched.as_str());
         let Ok(url) = Url::parse(candidate) else {
             continue;
@@ -268,7 +499,7 @@ fn extract_urls(input: &str, iocs: &mut IocCollector) {
         if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
             continue;
         }
-        iocs.record(input, matched.start(), IocKind::Url, url.into(), None);
+        iocs.record(matched.start(), IocKind::Url, url.into(), None);
     }
 }
 
@@ -277,15 +508,12 @@ fn extract_ips(input: &str, iocs: &mut IocCollector) {
     let ipv4 =
         IPV4.get_or_init(|| Regex::new(r"\b(?:\d{1,3}\.){3}\d{1,3}\b").expect("valid regex"));
     for matched in ipv4.find_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
         let candidate = matched.as_str();
         if candidate.parse::<Ipv4Addr>().is_ok() {
-            iocs.record(
-                input,
-                matched.start(),
-                IocKind::Ipv4,
-                candidate.to_owned(),
-                None,
-            );
+            iocs.record(matched.start(), IocKind::Ipv4, candidate.to_owned(), None);
         }
     }
 
@@ -293,6 +521,9 @@ fn extract_ips(input: &str, iocs: &mut IocCollector) {
     for candidate in
         input.split(|character: char| !character.is_ascii_hexdigit() && character != ':')
     {
+        if iocs.is_full() {
+            break;
+        }
         if !candidate.contains(':') {
             continue;
         }
@@ -304,7 +535,7 @@ fn extract_ips(input: &str, iocs: &mut IocCollector) {
             .map(|index| search_start + index)
             .expect("split candidate originates from input");
         search_start = offset + candidate.len();
-        iocs.record(input, offset, IocKind::Ipv6, address.to_string(), None);
+        iocs.record(offset, IocKind::Ipv6, address.to_string(), None);
     }
 }
 
@@ -313,6 +544,9 @@ fn extract_hashes(input: &str, iocs: &mut IocCollector) {
     let pattern = HASH.get_or_init(|| Regex::new(r"\b[0-9A-Fa-f]{32,128}\b").expect("valid regex"));
 
     for matched in pattern.find_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
         let candidate = matched.as_str();
         let detail = match candidate.len() {
             32 => Some("MD5 or NTLM"),
@@ -325,7 +559,6 @@ fn extract_hashes(input: &str, iocs: &mut IocCollector) {
         };
         if let Some(detail) = detail {
             iocs.record(
-                input,
                 matched.start(),
                 IocKind::Hash,
                 candidate.to_ascii_lowercase(),
@@ -342,8 +575,10 @@ fn extract_emails(input: &str, iocs: &mut IocCollector) {
             .expect("valid regex")
     });
     for matched in pattern.find_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
         iocs.record(
-            input,
             matched.start(),
             IocKind::Email,
             matched.as_str().to_ascii_lowercase(),
@@ -359,6 +594,9 @@ fn extract_macs(input: &str, iocs: &mut IocCollector) {
             .expect("valid regex")
     });
     for matched in pattern.find_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
         let candidate = matched.as_str();
         let compact = candidate
             .chars()
@@ -373,7 +611,7 @@ fn extract_macs(input: &str, iocs: &mut IocCollector) {
             .map(|pair| std::str::from_utf8(pair).expect("MAC is ASCII"))
             .collect::<Vec<_>>()
             .join(":");
-        iocs.record(input, matched.start(), IocKind::Mac, normalized, None);
+        iocs.record(matched.start(), IocKind::Mac, normalized, None);
     }
 }
 
@@ -385,14 +623,254 @@ fn extract_domains(input: &str, iocs: &mut IocCollector) {
     });
 
     for matched in pattern.find_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
         iocs.record(
-            input,
             matched.start(),
             IocKind::Domain,
             matched.as_str().to_ascii_lowercase(),
             None,
         );
     }
+}
+
+struct SecretPatterns {
+    cloud_access_key: Regex,
+    github_token: Regex,
+    slack_token: Regex,
+    bearer_token: Regex,
+    assignment: Regex,
+    database_password: Regex,
+    private_key_begin: Regex,
+    private_key_end: Regex,
+}
+
+fn secret_patterns() -> &'static SecretPatterns {
+    static PATTERNS: OnceLock<SecretPatterns> = OnceLock::new();
+    PATTERNS.get_or_init(|| SecretPatterns {
+        cloud_access_key: Regex::new(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+            .expect("valid cloud access key regex"),
+        github_token: Regex::new(r"\bgh[pousr]_[A-Za-z0-9]{20,255}\b")
+            .expect("valid GitHub token regex"),
+        slack_token: Regex::new(r"\bxox[baprs]-[A-Za-z0-9-]{10,512}\b")
+            .expect("valid Slack token regex"),
+        bearer_token: Regex::new(r"(?i)\bbearer\s+([A-Za-z0-9._~+/=-]{16,4096})")
+            .expect("valid bearer token regex"),
+        assignment: Regex::new(
+            r#"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret)\s*[:=]\s*["']?([^\s"',;]{8,4096})"#,
+        )
+        .expect("valid secret assignment regex"),
+        database_password: Regex::new(
+            r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s:@/]+:([^@\s/]{1,512})@",
+        )
+        .expect("valid database credential regex"),
+        private_key_begin: Regex::new(
+            r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----",
+        )
+        .expect("valid private key begin regex"),
+        private_key_end: Regex::new(
+            r"-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----",
+        )
+        .expect("valid private key end regex"),
+    })
+}
+
+fn extract_secrets(input: &str, iocs: &mut IocCollector<'_>) {
+    let patterns = secret_patterns();
+    record_secret_matches(
+        input,
+        &patterns.cloud_access_key,
+        0,
+        "cloud access key candidate",
+        IocKind::Secret,
+        iocs,
+    );
+    record_secret_matches(
+        input,
+        &patterns.github_token,
+        0,
+        "GitHub token candidate",
+        IocKind::Secret,
+        iocs,
+    );
+    record_secret_matches(
+        input,
+        &patterns.slack_token,
+        0,
+        "Slack token candidate",
+        IocKind::Secret,
+        iocs,
+    );
+    record_secret_matches(
+        input,
+        &patterns.bearer_token,
+        1,
+        "bearer token candidate",
+        IocKind::Secret,
+        iocs,
+    );
+    record_secret_matches(
+        input,
+        &patterns.assignment,
+        2,
+        "credential assignment candidate",
+        IocKind::Secret,
+        iocs,
+    );
+    record_secret_matches(
+        input,
+        &patterns.database_password,
+        1,
+        "database URI password candidate",
+        IocKind::Secret,
+        iocs,
+    );
+    record_secret_matches(
+        input,
+        &patterns.private_key_begin,
+        0,
+        "private key material marker",
+        IocKind::PrivateKey,
+        iocs,
+    );
+}
+
+fn record_secret_matches(
+    input: &str,
+    pattern: &Regex,
+    capture_index: usize,
+    detail: &str,
+    kind: IocKind,
+    iocs: &mut IocCollector<'_>,
+) {
+    for captures in pattern.captures_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
+        let Some(matched) = captures.get(capture_index) else {
+            continue;
+        };
+        iocs.record(
+            matched.start(),
+            kind,
+            matched.as_str().to_owned(),
+            Some(detail.to_owned()),
+        );
+    }
+}
+
+fn sensitive_ranges(input: &str) -> Vec<(usize, usize)> {
+    let patterns = secret_patterns();
+    let specifications = [
+        (&patterns.cloud_access_key, 0),
+        (&patterns.github_token, 0),
+        (&patterns.slack_token, 0),
+        (&patterns.bearer_token, 1),
+        (&patterns.assignment, 2),
+        (&patterns.database_password, 1),
+    ];
+    let mut ranges = specifications
+        .into_iter()
+        .flat_map(|(pattern, capture_index)| {
+            pattern
+                .captures_iter(input)
+                .filter_map(move |captures| captures.get(capture_index).map(|item| item.range()))
+        })
+        .map(|range| (range.start, range.end))
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+    ranges
+}
+
+fn redact_secrets(input: &str) -> String {
+    let ranges = sensitive_ranges(input);
+    if ranges.is_empty() {
+        return input.to_owned();
+    }
+    let mut output = String::with_capacity(input.len());
+    let mut cursor = 0;
+    for (start, end) in ranges {
+        if start < cursor {
+            continue;
+        }
+        output.push_str(&input[cursor..start]);
+        output.push_str(&mask_secret(&input[start..end], IocKind::Secret));
+        cursor = end;
+    }
+    output.push_str(&input[cursor..]);
+    output
+}
+
+pub(crate) fn redact_sensitive_text(input: &str) -> String {
+    let mut ranges = sensitive_ranges(input);
+    ranges.extend(private_key_ranges(input));
+    if ranges.is_empty() {
+        return input.to_owned();
+    }
+    ranges.sort_unstable();
+    let mut output = String::with_capacity(input.len());
+    let mut cursor = 0;
+    for (start, end) in ranges {
+        if end <= cursor {
+            continue;
+        }
+        let start = start.max(cursor);
+        output.push_str(&input[cursor..start]);
+        for character in input[start..end].chars() {
+            if matches!(character, '\r' | '\n') {
+                output.push(character);
+            } else {
+                output.push('*');
+            }
+        }
+        cursor = end;
+    }
+    output.push_str(&input[cursor..]);
+    output
+}
+
+fn private_key_ranges(input: &str) -> Vec<(usize, usize)> {
+    let patterns = secret_patterns();
+    patterns
+        .private_key_begin
+        .find_iter(input)
+        .map(|begin| {
+            let end = patterns
+                .private_key_end
+                .find_at(input, begin.end())
+                .map_or(input.len(), |end| end.end());
+            (begin.start(), end)
+        })
+        .collect()
+}
+
+fn mask_secret(value: &str, kind: IocKind) -> String {
+    if kind == IocKind::PrivateKey {
+        return "[PRIVATE KEY MATERIAL REDACTED]".to_owned();
+    }
+    let characters = value.chars().collect::<Vec<_>>();
+    if characters.len() < 12 {
+        return "********".to_owned();
+    }
+    let prefix = characters.iter().take(4).collect::<String>();
+    let suffix = characters
+        .iter()
+        .skip(characters.len() - 4)
+        .collect::<String>();
+    format!("{prefix}…{suffix} [REDACTED]")
+}
+
+fn truncate_chars(value: &str, maximum: usize) -> String {
+    if value.chars().count() <= maximum {
+        return value.to_owned();
+    }
+    let mut output = value
+        .chars()
+        .take(maximum.saturating_sub(1))
+        .collect::<String>();
+    output.push('…');
+    output
 }
 
 fn wildcard_matches(pattern: &str, value: &str) -> bool {
@@ -428,7 +906,7 @@ fn trim_punctuation(value: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExtractOptions, IocKind, IocSort, PatternList, defang, extract};
+    use super::{ExtractOptions, IocKind, IocSort, PatternList, defang, extract, mask_secret};
 
     const DIRTY_LOG: &str = "request hxxps[://]EVIL[.]Example[.]COM/a, source=8[.]8[.]8[.]8 ipv6=2001:4860:4860::8888 hash=D41D8CD98F00B204E9800998ECF8427E alt=cdn(.)example(.)net mail=SOC[@]Example[.]COM mac=AA-BB-CC-DD-EE-FF";
 
@@ -513,8 +991,95 @@ mod tests {
             .find(|ioc| ioc.kind == IocKind::Ipv4)
             .expect("IPv4 IOC");
         assert_eq!(ip.occurrences, 3);
-        assert_eq!((ip.first_line, ip.last_line), (1, 3));
+        assert_eq!((ip.first_line, ip.last_line), (Some(1), Some(3)));
         assert_eq!(report.total_occurrences, 4);
+    }
+
+    #[test]
+    fn tracks_original_columns_for_defanged_values() {
+        let report = extract(
+            "prefix hxxps[://]evil[.]example/path",
+            ExtractOptions {
+                source: "sample.log".to_owned(),
+                ..ExtractOptions::default()
+            },
+        );
+        let url = report
+            .iocs
+            .iter()
+            .find(|ioc| ioc.kind == IocKind::Url)
+            .expect("URL IOC");
+        assert_eq!(url.source, "sample.log");
+        assert_eq!(url.first_line, Some(1));
+        assert_eq!(url.first_column, Some(8));
+        assert_eq!(url.locations[0].column, 8);
+    }
+
+    #[test]
+    fn masks_short_and_long_secret_candidates() {
+        assert_eq!(mask_secret("short123", IocKind::Secret), "********");
+        assert_eq!(
+            mask_secret("AKIA1234567890ABCDEF", IocKind::Secret),
+            "AKIA…CDEF [REDACTED]"
+        );
+    }
+
+    #[test]
+    fn redacts_secrets_and_private_key_material_from_context() {
+        let secret = "AKIA1234567890ABCDEF";
+        let input = format!(
+            "before\napi_key={secret}\n-----BEGIN PRIVATE KEY-----\nVERYSECRETKEYBODY\n-----END PRIVATE KEY-----\nafter"
+        );
+        let report = extract(
+            &input,
+            ExtractOptions {
+                include_secret: true,
+                context_lines: 1,
+                ..ExtractOptions::default()
+            },
+        );
+        let serialized = serde_json::to_string(&report).expect("serialize report");
+        assert!(!serialized.contains(secret));
+        assert!(!serialized.contains("VERYSECRETKEYBODY"));
+        assert!(serialized.contains("REDACTED"));
+        assert!(report.iocs.iter().all(|ioc| ioc.redacted));
+    }
+
+    #[test]
+    fn reveal_option_is_explicit_and_locations_are_bounded() {
+        let secret = "AKIA1234567890ABCDEF";
+        let input = format!("api_key={secret}\napi_key={secret}\napi_key={secret}");
+        let report = extract(
+            &input,
+            ExtractOptions {
+                include_secret: true,
+                reveal_secrets: true,
+                max_locations: 2,
+                ..ExtractOptions::default()
+            },
+        );
+        let candidate = report
+            .iocs
+            .iter()
+            .find(|ioc| ioc.kind == IocKind::Secret && ioc.value == secret)
+            .expect("revealed candidate");
+        assert!(!candidate.redacted);
+        assert_eq!(candidate.occurrences, 3);
+        assert_eq!(candidate.locations.len(), 2);
+        assert!(candidate.locations_truncated);
+    }
+
+    #[test]
+    fn match_collection_has_a_global_limit() {
+        let report = extract(
+            "8.8.8.8 1.1.1.1 example.com",
+            ExtractOptions {
+                max_matches: 1,
+                ..ExtractOptions::default()
+            },
+        );
+        assert!(report.match_limit_reached);
+        assert_eq!(report.total_occurrences, 1);
     }
 
     #[test]

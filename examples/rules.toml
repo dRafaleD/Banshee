@@ -7,6 +7,10 @@ severity = "high"
 kind = "regex"
 pattern = '(?i)powershell(?:\.exe)?\s+[^\r\n]{0,120}-(?:enc|encodedcommand)\b'
 tags = ["powershell", "execution"]
+category = "execution"
+confidence = "medium"
+references = ["internal-playbook-7"]
+max_matches = 100
 
 [[rules]]
 id = "private-key-marker"
@@ -23,3 +27,30 @@ severity = "low"
 kind = "hex"
 pattern = "4D 5A ?? ??"
 tags = ["executable"]
+
+[[rules]]
+id = "pe-command-markers"
+description = "PE content containing a DOS stub and a command-interpreter marker"
+severity = "medium"
+kind = "hex"
+pattern = "4D 5A"
+tags = ["executable", "compound"]
+category = "execution"
+confidence = "low"
+file_types = ["pe"]
+min_entropy = 1.0
+max_matches = 1
+
+[[rules.all]]
+kind = "literal"
+pattern = "This program cannot be run in DOS mode"
+
+[[rules.any]]
+kind = "literal"
+pattern = "powershell"
+case_insensitive = true
+
+[[rules.any]]
+kind = "literal"
+pattern = "cmd.exe"
+case_insensitive = true

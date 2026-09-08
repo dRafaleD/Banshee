@@ -335,15 +335,42 @@ pub fn print_ioc_report(
                 } else {
                     ioc.value.clone()
                 };
-                writeln!(
+                write!(
                     output,
-                    "{}\t{}\tcount={}\tlines={}-{}",
+                    "{}\t{}\tcount={}",
                     paint(&ioc.kind.to_string(), ioc_tone(ioc.kind)),
                     terminal_safe(&value),
-                    ioc.occurrences,
-                    ioc.first_line,
-                    ioc.last_line
+                    ioc.occurrences
                 )?;
+                match (ioc.first_line, ioc.first_column, ioc.last_line) {
+                    (Some(first), Some(column), Some(last)) => {
+                        write!(
+                            output,
+                            "\tlines={first}-{last}\tsource={}\tlocation={first}:{column}",
+                            terminal_safe(&ioc.source)
+                        )?;
+                    }
+                    _ => write!(
+                        output,
+                        "\tlines=unavailable\tsource={}\tlocation=unavailable",
+                        terminal_safe(&ioc.source)
+                    )?,
+                }
+                if ioc.locations_truncated {
+                    write!(output, "\tlocations=truncated")?;
+                }
+                writeln!(output)?;
+                for location in &ioc.locations {
+                    for context in &location.context {
+                        writeln!(
+                            output,
+                            "  {} {:>6} | {}",
+                            if context.matched { ">" } else { " " },
+                            context.line,
+                            terminal_safe(&context.text)
+                        )?;
+                    }
+                }
             }
         }
         OutputFormat::Json => {
@@ -366,6 +393,9 @@ pub fn print_ioc_report(
                     "occurrences",
                     "first_line",
                     "last_line",
+                    "source",
+                    "redacted",
+                    "first_column",
                 ],
             )?;
             for ioc in &report.iocs {
@@ -376,8 +406,11 @@ pub fn print_ioc_report(
                         ioc.value.clone(),
                         ioc.detail.clone().unwrap_or_default(),
                         ioc.occurrences.to_string(),
-                        ioc.first_line.to_string(),
-                        ioc.last_line.to_string(),
+                        option_usize(ioc.first_line),
+                        option_usize(ioc.last_line),
+                        ioc.source.clone(),
+                        ioc.redacted.to_string(),
+                        option_usize(ioc.first_column),
                     ],
                 )?;
             }
@@ -424,7 +457,7 @@ pub fn print_batch_csv(report: &crate::batch::BatchReport) -> Result<()> {
             &mut output,
             [
                 "analysis".to_owned(),
-                analysis.line.to_string(),
+                option_usize(analysis.line),
                 kind,
                 analysis.report.final_value.clone(),
                 analysis.token.clone(),
@@ -444,8 +477,8 @@ pub fn print_batch_csv(report: &crate::batch::BatchReport) -> Result<()> {
                 ioc.value.clone(),
                 ioc.detail.clone().unwrap_or_default(),
                 ioc.occurrences.to_string(),
-                ioc.first_line.to_string(),
-                ioc.last_line.to_string(),
+                option_usize(ioc.first_line),
+                option_usize(ioc.last_line),
             ],
         )?;
     }
@@ -499,9 +532,14 @@ fn ioc_tone(kind: crate::ioc::IocKind) -> Tone {
     match kind {
         crate::ioc::IocKind::Hash => Tone::Danger,
         crate::ioc::IocKind::Url | crate::ioc::IocKind::Domain => Tone::Warning,
+        crate::ioc::IocKind::PrivateKey | crate::ioc::IocKind::Secret => Tone::Danger,
         crate::ioc::IocKind::Ipv4 | crate::ioc::IocKind::Ipv6 => Tone::Info,
         crate::ioc::IocKind::Email | crate::ioc::IocKind::Mac => Tone::Good,
     }
+}
+
+fn option_usize(value: Option<usize>) -> String {
+    value.map_or_else(String::new, |value| value.to_string())
 }
 
 fn paint(value: &str, tone: Tone) -> String {

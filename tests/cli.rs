@@ -523,6 +523,111 @@ fn extract_normalizes_email_and_mac() {
         .stdout(predicate::str::contains("mac\taa:bb:cc:dd:ee:ff"));
 }
 
+#[test]
+fn extract_redacts_secret_candidates_and_context_by_default() {
+    let secret = "AKIA1234567890ABCDEF";
+    let input = format!("before\napi_key={secret}\nafter");
+
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["extract", "--secret", "--context", "1", "--json", &input])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not())
+        .stdout(predicate::str::contains("AKIA…CDEF [REDACTED]"))
+        .stdout(predicate::str::contains("\"source\": \"argument\""))
+        .stdout(predicate::str::contains("\"line\": 2"))
+        .stdout(predicate::str::contains("\"column\": 9"));
+
+    let mut verbose = Command::cargo_bin("banshee").expect("binary");
+    verbose
+        .args(["extract", "--secret", "--verbose", &input])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not())
+        .stderr(predicate::str::contains(secret).not());
+}
+
+#[test]
+fn extract_reveals_secret_candidates_only_with_explicit_opt_in() {
+    let secret = "AKIA1234567890ABCDEF";
+    let input = format!("api_key={secret}");
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["extract", "--secret", "--reveal-secrets", "--json", &input])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret))
+        .stdout(predicate::str::contains("\"redacted\": false"));
+}
+
+#[test]
+fn binary_analysis_omits_positions_and_rule_samples_redact_secrets() {
+    let secret = "AKIA1234567890ABCDEF";
+    let sample = temp_fixture("binary-secret.bin");
+    let rules = temp_fixture("secret-preview-rules.toml");
+    let mut bytes = vec![0xff, 0x00];
+    bytes.extend_from_slice(format!("api_key={secret}").as_bytes());
+    std::fs::write(&sample, bytes).expect("write binary secret fixture");
+    std::fs::write(
+        &rules,
+        format!(
+            r#"
+version = 1
+[[rules]]
+id = "secret-preview"
+kind = "literal"
+pattern = "{secret}"
+"#
+        ),
+    )
+    .expect("write secret rule fixture");
+
+    let mut analyze = Command::cargo_bin("banshee").expect("binary");
+    analyze
+        .args(["analyze", "--format", "json", "--file"])
+        .arg(&sample)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not())
+        .stdout(predicate::str::contains("\"positions_available\": false"))
+        .stdout(predicate::str::contains("\"first_line\": null"));
+
+    let mut report = Command::cargo_bin("banshee").expect("binary");
+    report
+        .arg("report")
+        .arg(&sample)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not())
+        .stdout(predicate::str::contains("[REDACTED]"));
+
+    let mut directory_scan = Command::cargo_bin("banshee").expect("binary");
+    directory_scan
+        .arg("scan")
+        .arg(&sample)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not())
+        .stdout(predicate::str::contains("[REDACTED]"));
+
+    let mut rule_scan = Command::cargo_bin("banshee").expect("binary");
+    rule_scan
+        .args(["rules", "scan", "--rules"])
+        .arg(&rules)
+        .arg("--file")
+        .arg(&sample)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not())
+        .stdout(predicate::str::contains("********************"));
+
+    std::fs::remove_file(sample).expect("remove binary fixture");
+    std::fs::remove_file(rules).expect("remove rules fixture");
+}
+
 fn temp_fixture(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("banshee-{}-{name}", std::process::id()))
 }
@@ -570,12 +675,19 @@ fn new_codecs_are_available_from_the_cli() {
 #[test]
 fn file_inspect_reports_elf_headers() {
     let path = temp_fixture("fixture.elf");
-    let mut bytes = vec![0_u8; 64];
+    let mut bytes = vec![0_u8; 0x100];
     bytes[..6].copy_from_slice(b"\x7FELF\x02\x01");
     bytes[16..18].copy_from_slice(&2_u16.to_le_bytes());
     bytes[18..20].copy_from_slice(&0x3E_u16.to_le_bytes());
     bytes[24..32].copy_from_slice(&0x401000_u64.to_le_bytes());
+    bytes[32..40].copy_from_slice(&64_u64.to_le_bytes());
+    bytes[54..56].copy_from_slice(&56_u16.to_le_bytes());
+    bytes[56..58].copy_from_slice(&1_u16.to_le_bytes());
     bytes[60..62].copy_from_slice(&9_u16.to_le_bytes());
+    bytes[64..68].copy_from_slice(&3_u32.to_le_bytes());
+    bytes[72..80].copy_from_slice(&0x80_u64.to_le_bytes());
+    bytes[96..104].copy_from_slice(&28_u64.to_le_bytes());
+    bytes[0x80..0x9c].copy_from_slice(b"/lib64/ld-linux-x86-64.so.2\0");
     std::fs::write(&path, bytes).expect("write ELF fixture");
 
     let mut command = Command::cargo_bin("banshee").expect("binary");
@@ -586,7 +698,10 @@ fn file_inspect_reports_elf_headers() {
         .success()
         .stdout(predicate::str::contains("Format: ELF executable"))
         .stdout(predicate::str::contains("Architecture: x86-64"))
-        .stdout(predicate::str::contains("Entry point: 0x401000"));
+        .stdout(predicate::str::contains("Entry point: 0x401000"))
+        .stdout(predicate::str::contains(
+            "ELF interpreter: /lib64/ld-linux-x86-64.so.2",
+        ));
 
     std::fs::remove_file(path).expect("remove fixture");
 }
@@ -630,6 +745,266 @@ pattern = '(?i)powershell(?:\.exe)?\s+-enc'
 }
 
 #[test]
+fn rules_support_metadata_predicates_compound_conditions_and_match_caps() {
+    let path = temp_fixture("compound-rules.toml");
+    std::fs::write(
+        &path,
+        r#"
+version = 1
+[[rules]]
+id = "compound-pe"
+description = "Compound PE marker"
+severity = "high"
+kind = "literal"
+pattern = "MARK"
+min_matches = 2
+max_matches = 2
+category = "execution"
+confidence = "medium"
+references = ["internal-playbook-7"]
+file_types = ["pe"]
+min_entropy = 0.0
+max_entropy = 8.0
+
+[[rules.all]]
+kind = "hex"
+pattern = "4D 5A"
+
+[[rules.any]]
+kind = "literal"
+pattern = "powershell"
+case_insensitive = true
+"#,
+    )
+    .expect("write compound rule fixture");
+
+    let mut validate = Command::cargo_bin("banshee").expect("binary");
+    validate
+        .args(["rules", "validate"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("category=execution"))
+        .stdout(predicate::str::contains("conditions=all:1/any:1"));
+
+    let mut scan = Command::cargo_bin("banshee").expect("binary");
+    scan.args(["rules", "scan", "--rules"])
+        .arg(&path)
+        .arg("MZ PowerShell MARK MARK MARK")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[high] compound-pe"))
+        .stdout(predicate::str::contains("file_type=pe"))
+        .stdout(predicate::str::contains("conditions: all 1/1; any 1/1"))
+        .stdout(predicate::str::contains(
+            "match count truncated at configured/safety limit",
+        ));
+
+    std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
+fn evidence_bundle_is_atomic_redacted_force_guarded_and_verifiable() {
+    let root = temp_fixture("evidence-root");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).expect("create evidence root");
+    let sample = root.join("sample.txt");
+    let rules = root.join("rules.toml");
+    let bundle = root.join("case-evidence");
+    std::fs::write(
+        &sample,
+        b"host=example.com\napi_key = super-secret-value-123456\n",
+    )
+    .expect("write evidence sample");
+    std::fs::write(
+        &rules,
+        "version = 1\n[[rules]]\nid = \"example-domain\"\nkind = \"literal\"\npattern = \"example.com\"\n",
+    )
+    .expect("write evidence rules");
+
+    let mut create = Command::cargo_bin("banshee").expect("binary");
+    create
+        .args(["evidence", "create"])
+        .arg(&sample)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("--output")
+        .arg(&bundle)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created evidence bundle:"))
+        .stdout(predicate::str::contains("Source sample included: false"));
+    for name in [
+        "report.json",
+        "report.md",
+        "hashes.txt",
+        "iocs.json",
+        "rule-matches.json",
+        "metadata.json",
+        "manifest.json",
+    ] {
+        assert!(bundle.join(name).is_file(), "missing evidence file {name}");
+    }
+    assert!(!bundle.join("source-sample.bin").exists());
+    let iocs = std::fs::read_to_string(bundle.join("iocs.json")).expect("read IOC evidence");
+    assert!(!iocs.contains("super-secret-value-123456"));
+    let rule_matches =
+        std::fs::read_to_string(bundle.join("rule-matches.json")).expect("read rule evidence");
+    assert!(rule_matches.contains("\"matched_rules\": 1"));
+
+    let mut verify = Command::cargo_bin("banshee").expect("binary");
+    verify
+        .args(["evidence", "verify"])
+        .arg(&bundle)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Valid: true"));
+
+    let mut refuse = Command::cargo_bin("banshee").expect("binary");
+    refuse
+        .args(["evidence", "create"])
+        .arg(&sample)
+        .arg("--output")
+        .arg(&bundle)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("use --force to replace it"));
+
+    let mut replace = Command::cargo_bin("banshee").expect("binary");
+    replace
+        .args(["evidence", "create"])
+        .arg(&sample)
+        .arg("--include-sample")
+        .arg("--output")
+        .arg(&bundle)
+        .arg("--force")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Replaced existing target: true"));
+    assert!(bundle.join("source-sample.bin").is_file());
+
+    std::fs::write(bundle.join("hashes.txt"), b"tampered").expect("tamper bundle");
+    let mut detect = Command::cargo_bin("banshee").expect("binary");
+    detect
+        .args(["evidence", "verify"])
+        .arg(&bundle)
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Valid: false"))
+        .stdout(predicate::str::contains("hashes.txt"));
+
+    let ordinary = root.join("ordinary-directory");
+    std::fs::create_dir(&ordinary).expect("create ordinary directory");
+    std::fs::write(ordinary.join("keep.txt"), b"keep").expect("write ordinary file");
+    let mut protect = Command::cargo_bin("banshee").expect("binary");
+    protect
+        .args(["evidence", "create"])
+        .arg(&sample)
+        .arg("--output")
+        .arg(&ordinary)
+        .arg("--force")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "manifest.json bundle marker is missing",
+        ));
+    assert_eq!(
+        std::fs::read(ordinary.join("keep.txt")).expect("read protected file"),
+        b"keep"
+    );
+
+    std::fs::remove_dir_all(root).expect("remove evidence root");
+}
+
+#[test]
+fn diff_compares_reports_and_verified_bundles_without_source_samples() {
+    let root = temp_fixture("diff-root");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir(&root).expect("create diff root");
+    let left_sample = root.join("left.txt");
+    let right_sample = root.join("right.txt");
+    let left_report = root.join("left-report.json");
+    let right_report = root.join("right-report.json");
+    let left_bundle = root.join("left-bundle");
+    let right_bundle = root.join("right-bundle");
+    std::fs::write(&left_sample, b"host=one.example\n").expect("write left sample");
+    std::fs::write(&right_sample, b"host=two.example\nmarker=changed\n")
+        .expect("write right sample");
+
+    for (sample, report) in [(&left_sample, &left_report), (&right_sample, &right_report)] {
+        let mut command = Command::cargo_bin("banshee").expect("binary");
+        command
+            .arg("report")
+            .arg(sample)
+            .args(["--format", "json", "--output"])
+            .arg(report)
+            .assert()
+            .success();
+    }
+    for (sample, bundle) in [(&left_sample, &left_bundle), (&right_sample, &right_bundle)] {
+        let mut command = Command::cargo_bin("banshee").expect("binary");
+        command
+            .args(["evidence", "create"])
+            .arg(sample)
+            .arg("--output")
+            .arg(bundle)
+            .assert()
+            .success();
+        assert!(!bundle.join("source-sample.bin").exists());
+    }
+
+    std::fs::remove_file(&left_sample).expect("remove left source");
+    std::fs::remove_file(&right_sample).expect("remove right source");
+
+    let mut reports = Command::cargo_bin("banshee").expect("binary");
+    reports
+        .arg("diff")
+        .arg(&left_report)
+        .arg(&right_report)
+        .arg("--json")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("\"has_changes\": true"))
+        .stdout(predicate::str::contains("\"iocs_added\": 1"))
+        .stdout(predicate::str::contains("\"iocs_removed\": 1"))
+        .stdout(predicate::str::contains("\"kind\": \"report_json\""));
+
+    let mut identical = Command::cargo_bin("banshee").expect("binary");
+    identical
+        .arg("diff")
+        .arg(&left_report)
+        .arg(&left_report)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Changes: false"));
+
+    let mut bundles = Command::cargo_bin("banshee").expect("binary");
+    bundles
+        .arg("diff")
+        .arg(&left_bundle)
+        .arg(&right_bundle)
+        .arg("--json")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("\"kind\": \"evidence_bundle\""));
+
+    let incompatible = root.join("incompatible.json");
+    std::fs::write(&incompatible, b"{\"schema_version\":2}").expect("write incompatible report");
+    let mut schema = Command::cargo_bin("banshee").expect("binary");
+    schema
+        .arg("diff")
+        .arg(&left_report)
+        .arg(&incompatible)
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "incompatible report schema versions",
+        ));
+
+    std::fs::remove_dir_all(root).expect("remove diff root");
+}
+
+#[test]
 fn analyze_reads_raw_gzip_files() {
     let path = temp_fixture("analysis.gz");
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -648,6 +1023,187 @@ fn analyze_reads_raw_gzip_files() {
         .stdout(predicate::str::contains("IOCs: 1"));
 
     std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
+fn report_combines_file_content_iocs_and_hashes() {
+    let path = temp_fixture("unified-report.txt");
+    std::fs::write(&path, b"source=8.8.8.8 payload=aGVsbG8=").expect("write report fixture");
+
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .arg("report")
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Banshee unified report"))
+        .stdout(predicate::str::contains("SHA-256:"))
+        .stdout(predicate::str::contains("IOCs: 1"))
+        .stdout(predicate::str::contains("Local rules: not requested"));
+
+    let mut json = Command::cargo_bin("banshee").expect("binary");
+    json.arg("report")
+        .arg(&path)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"schema_version\": 1"))
+        .stdout(predicate::str::contains("\"status\": \"not_requested\""))
+        .stdout(predicate::str::contains("\"sha256\""));
+
+    let mut markdown = Command::cargo_bin("banshee").expect("binary");
+    markdown
+        .arg("report")
+        .arg(&path)
+        .args(["--format", "markdown"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Banshee unified report"))
+        .stdout(predicate::str::contains("## Findings"))
+        .stdout(predicate::str::contains("not a malware verdict"));
+
+    std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
+fn report_applies_optional_rules_and_finding_exit_status() {
+    let sample = temp_fixture("report-rule-sample.txt");
+    let rules = temp_fixture("report-rules.toml");
+    std::fs::write(&sample, b"PowerShell.exe -enc AAA").expect("write sample fixture");
+    std::fs::write(
+        &rules,
+        r#"
+version = 1
+[[rules]]
+id = "encoded-command"
+description = "Encoded PowerShell command"
+severity = "high"
+kind = "regex"
+pattern = '(?i)powershell(?:\.exe)?\s+-enc'
+"#,
+    )
+    .expect("write rule fixture");
+
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .arg("report")
+        .arg(&sample)
+        .arg("--rules")
+        .arg(&rules)
+        .arg("--fail-on-findings")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Local rules: 1 loaded; 1 matched"))
+        .stdout(predicate::str::contains("[high] local rule"));
+
+    std::fs::remove_file(sample).expect("remove sample fixture");
+    std::fs::remove_file(rules).expect("remove rule fixture");
+}
+
+#[test]
+fn scan_is_non_recursive_by_default_and_applies_glob_filters_in_path_order() {
+    let root = temp_fixture("scan-filter-root");
+    let nested = root.join("nested");
+    std::fs::create_dir_all(&nested).expect("create scan fixture directories");
+    std::fs::write(root.join("b.bin"), b"binary").expect("write b fixture");
+    std::fs::write(root.join("a.txt"), b"alpha").expect("write a fixture");
+    std::fs::write(nested.join("c.txt"), b"charlie").expect("write c fixture");
+
+    let mut shallow = Command::cargo_bin("banshee").expect("binary");
+    shallow
+        .arg("scan")
+        .arg(&root)
+        .args(["--include", "*.txt"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[analyzed] a.txt"))
+        .stdout(predicate::str::contains("[skipped] b.bin"))
+        .stdout(predicate::str::contains("nested/c.txt").not())
+        .stdout(predicate::str::contains(
+            "Summary: 2 discovered; 1 analyzed",
+        ));
+
+    let mut recursive = Command::cargo_bin("banshee").expect("binary");
+    let output = recursive
+        .arg("scan")
+        .arg(&root)
+        .args(["--recursive", "--include", "*.txt"])
+        .output()
+        .expect("run recursive scan");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 output");
+    let a = stdout.find("[analyzed] a.txt").expect("a result");
+    let b = stdout.find("[skipped] b.bin").expect("b result");
+    let c = stdout
+        .find("[analyzed] nested/c.txt")
+        .expect("nested result");
+    assert!(a < b && b < c, "scan results must be path sorted");
+
+    std::fs::remove_dir_all(root).expect("remove scan fixture");
+}
+
+#[test]
+fn scan_enforces_limits_and_emits_structured_jsonl_records() {
+    let root = temp_fixture("scan-limit-root");
+    std::fs::create_dir_all(&root).expect("create scan fixture directory");
+    std::fs::write(root.join("a.txt"), b"12345").expect("write a fixture");
+    std::fs::write(root.join("b.txt"), b"67890").expect("write b fixture");
+
+    let mut per_file = Command::cargo_bin("banshee").expect("binary");
+    per_file
+        .arg("scan")
+        .arg(&root)
+        .args(["--max-file-size", "4B"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[skipped] a.txt"))
+        .stdout(predicate::str::contains("exceeds per-file limit 4"));
+
+    let mut total = Command::cargo_bin("banshee").expect("binary");
+    total
+        .arg("scan")
+        .arg(&root)
+        .args(["--max-total-size", "5B", "--format", "jsonl"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"type\":\"scan_start\""))
+        .stdout(predicate::str::contains("\"type\":\"file\""))
+        .stdout(predicate::str::contains("\"type\":\"summary\""))
+        .stdout(predicate::str::contains(
+            "\"total_size_limit_reached\":true",
+        ));
+
+    let mut file_count = Command::cargo_bin("banshee").expect("binary");
+    file_count
+        .arg("scan")
+        .arg(&root)
+        .args(["--max-files", "1", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"files_omitted_by_limit\": 1"))
+        .stdout(predicate::str::contains("\"file_limit_reached\": true"));
+
+    std::fs::remove_dir_all(root).expect("remove scan fixture");
+}
+
+#[test]
+fn scan_keeps_partial_results_and_returns_two_for_analysis_failures() {
+    let root = temp_fixture("scan-partial-root");
+    std::fs::create_dir_all(&root).expect("create scan fixture directory");
+    std::fs::write(root.join("a-good.txt"), b"ordinary text").expect("write good fixture");
+    std::fs::write(root.join("b-broken.zip"), b"PK\x03\x04broken").expect("write bad fixture");
+
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .arg("scan")
+        .arg(&root)
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("[analyzed] a-good.txt"))
+        .stdout(predicate::str::contains("[failed] b-broken.zip"))
+        .stdout(predicate::str::contains("1 failed"));
+
+    std::fs::remove_dir_all(root).expect("remove scan fixture");
 }
 
 #[test]

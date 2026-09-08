@@ -4,6 +4,8 @@ pub mod batch;
 pub mod cert;
 pub mod cli;
 pub mod codec;
+pub mod diff;
+pub mod evidence;
 pub mod file_inspect;
 pub mod hash;
 pub mod input;
@@ -12,7 +14,9 @@ pub mod jwt;
 pub mod output;
 pub mod recipe;
 pub mod regex_tool;
+pub mod report;
 pub mod rules;
+pub mod scan;
 pub mod timestamp;
 pub mod watch;
 
@@ -21,14 +25,15 @@ use clap::{CommandFactory, Parser};
 
 use crate::analysis::Analyzer;
 use crate::cli::{
-    CertCommand, Cli, Command, FileCommand, HashCommand, JwtCommand, RegexCommand, RulesCommand,
-    TimestampCommand,
+    CertCommand, Cli, Command, EvidenceCommand, FileCommand, HashCommand, JwtCommand, RegexCommand,
+    RulesCommand, TimestampCommand,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunOutcome {
     Success,
     Findings,
+    PartialFailure,
 }
 
 pub fn run() -> Result<RunOutcome> {
@@ -39,6 +44,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
     let started = std::time::Instant::now();
     let fail_on_findings = cli.fail_on_findings;
     let verbose = cli.verbose;
+    let destination = cli.output.clone();
+    let evidence_create = matches!(
+        &cli.command,
+        Command::Evidence(args) if matches!(&args.command, EvidenceCommand::Create(_))
+    );
     if verbose {
         eprintln!(
             "[banshee] offline mode; output={}",
@@ -48,10 +58,19 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 .unwrap_or_else(|| "stdout".to_owned())
         );
     }
-    output::configure_destination(cli.output.clone(), cli.force)?;
+    output::configure_destination(
+        if evidence_create {
+            None
+        } else {
+            cli.output.clone()
+        },
+        cli.force,
+    )?;
     output::configure_quiet(cli.quiet);
     output::configure_color(cli.color, cli.no_color);
     let mut has_findings = false;
+    let mut has_operational_issues = false;
+    let mut explicit_findings_status = false;
     match cli.command {
         Command::Whatis(args) => {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
@@ -108,6 +127,18 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             }
         },
         Command::Extract(args) => {
+            let source = args
+                .source
+                .file
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| {
+                    if args.source.input.is_some() {
+                        "argument".to_owned()
+                    } else {
+                        "stdin".to_owned()
+                    }
+                });
             let value = input::read(&args.source.input, args.source.file.as_deref())?;
             let report = ioc::extract(
                 &value,
@@ -118,9 +149,16 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     include_hash: args.hash,
                     include_email: args.email,
                     include_mac: args.mac,
+                    include_secret: args.secret,
                     allowlist: ioc::PatternList::from_files(&args.allowlist)?,
                     denylist: ioc::PatternList::from_files(&args.denylist)?,
                     sort: args.sort,
+                    source,
+                    context_lines: args.context,
+                    max_context_chars: args.max_context_chars,
+                    max_locations: args.max_locations,
+                    max_matches: args.max_matches,
+                    reveal_secrets: args.reveal_secrets,
                 },
             );
             has_findings |= report.total > 0;
@@ -375,6 +413,95 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                         if let Some(subsystem) = &executable.subsystem {
                             writeln!(output, "Subsystem: {subsystem}")?;
                         }
+                        for section in &executable.section_details {
+                            let permissions = format!(
+                                "{}{}{}{}",
+                                section
+                                    .readable
+                                    .map_or("", |value| if value { "R" } else { "-" }),
+                                if section.writable { "W" } else { "-" },
+                                if section.executable { "X" } else { "-" },
+                                section
+                                    .allocated
+                                    .map_or("", |value| if value { "A" } else { "-" }),
+                            );
+                            writeln!(
+                                output,
+                                "Section: {}\t{}\tfile={}+{}\tmem={}\t{}",
+                                output::terminal_safe(&section.name),
+                                section.virtual_address,
+                                section.file_offset,
+                                section.file_size,
+                                section.memory_size,
+                                permissions
+                            )?;
+                        }
+                        if executable.sections_truncated {
+                            writeln!(output, "Section list truncated at safety limit")?;
+                        }
+                        for library in &executable.imports {
+                            writeln!(
+                                output,
+                                "Import library: {}",
+                                output::terminal_safe(&library.name)
+                            )?;
+                            for symbol in &library.symbols {
+                                writeln!(output, "    {}", output::terminal_safe(symbol))?;
+                            }
+                            if library.symbols_truncated {
+                                writeln!(output, "    symbol list truncated at safety limit")?;
+                            }
+                        }
+                        if executable.imports_truncated {
+                            writeln!(output, "Import list truncated at safety limit")?;
+                        }
+                        for export in &executable.exports {
+                            writeln!(output, "Named export: {}", output::terminal_safe(export))?;
+                        }
+                        if executable.exports_truncated {
+                            writeln!(output, "Named export list truncated at safety limit")?;
+                        }
+                        if let Some(overlay) = &executable.overlay {
+                            writeln!(
+                                output,
+                                "Overlay: offset {}; {} bytes; certificate table included={}",
+                                overlay.offset, overlay.size, overlay.includes_certificate_table
+                            )?;
+                        }
+                        if let Some(present) = executable.signature_present {
+                            writeln!(
+                                output,
+                                "PE certificate table present: {present} (signature not verified)"
+                            )?;
+                        }
+                        if let Some(interpreter) = &executable.interpreter {
+                            writeln!(
+                                output,
+                                "ELF interpreter: {}",
+                                output::terminal_safe(interpreter)
+                            )?;
+                        }
+                        for library in &executable.needed_libraries {
+                            writeln!(output, "Needed library: {}", output::terminal_safe(library))?;
+                        }
+                        if executable.needed_libraries_truncated {
+                            writeln!(output, "Needed library list truncated at safety limit")?;
+                        }
+                        if let Some(rpath) = &executable.rpath {
+                            writeln!(output, "RPATH: {}", output::terminal_safe(rpath))?;
+                        }
+                        if let Some(runpath) = &executable.runpath {
+                            writeln!(output, "RUNPATH: {}", output::terminal_safe(runpath))?;
+                        }
+                        if let Some(stripped) = executable.stripped {
+                            writeln!(output, "Stripped: {stripped}")?;
+                        }
+                        if let Some(debug) = executable.debug_info_present {
+                            writeln!(output, "Debug sections present: {debug}")?;
+                        }
+                        for warning in &executable.parse_warnings {
+                            writeln!(output, "Parser warning: {}", output::terminal_safe(warning))?;
+                        }
                     }
                     if let Some(archive) = &report.archive {
                         writeln!(output, "Entries: {}", archive.total_entries)?;
@@ -420,6 +547,49 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                             rule.kind,
                             output::terminal_safe(&rule.description)
                         )?;
+                        if rule.category.is_some()
+                            || rule.confidence.is_some()
+                            || !rule.references.is_empty()
+                        {
+                            writeln!(
+                                output,
+                                "    category={}; confidence={}; references={}",
+                                rule.category
+                                    .as_deref()
+                                    .map_or_else(|| "-".to_owned(), output::terminal_safe),
+                                rule.confidence
+                                    .map_or_else(|| "-".to_owned(), |value| value.to_string()),
+                                rule.references.len()
+                            )?;
+                        }
+                        if !rule.file_types.is_empty()
+                            || rule.min_entropy.is_some()
+                            || rule.max_entropy.is_some()
+                            || rule.all_conditions > 0
+                            || rule.any_conditions > 0
+                        {
+                            let file_types = rule
+                                .file_types
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            writeln!(
+                                output,
+                                "    predicates: file_types={}; entropy={}..={}; conditions=all:{}/any:{}; matches={}..={}",
+                                if file_types.is_empty() {
+                                    "*"
+                                } else {
+                                    &file_types
+                                },
+                                rule.min_entropy.map_or(0.0, |value| value),
+                                rule.max_entropy.map_or(8.0, |value| value),
+                                rule.all_conditions,
+                                rule.any_conditions,
+                                rule.min_matches,
+                                rule.max_matches
+                            )?;
+                        }
                     }
                     Ok(())
                 })?;
@@ -449,6 +619,36 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 output::terminal_safe(&matched.description)
                             )?;
                         }
+                        writeln!(
+                            output,
+                            "    context: file_type={}; entropy={:.2}",
+                            matched.detected_file_type, matched.entropy
+                        )?;
+                        if let Some(category) = &matched.category {
+                            writeln!(output, "    category: {}", output::terminal_safe(category))?;
+                        }
+                        if let Some(confidence) = matched.confidence {
+                            writeln!(output, "    confidence: {confidence}")?;
+                        }
+                        if matched.conditions.all_required > 0
+                            || matched.conditions.any_required > 0
+                        {
+                            writeln!(
+                                output,
+                                "    conditions: all {}/{}; any {}/{}",
+                                matched.conditions.all_matched,
+                                matched.conditions.all_required,
+                                matched.conditions.any_matched,
+                                matched.conditions.any_required
+                            )?;
+                        }
+                        for reference in &matched.references {
+                            writeln!(
+                                output,
+                                "    reference: {}",
+                                output::terminal_safe(reference)
+                            )?;
+                        }
                         for sample in &matched.samples {
                             writeln!(
                                 output,
@@ -459,7 +659,10 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                             )?;
                         }
                         if matched.truncated {
-                            writeln!(output, "    match count truncated at safety limit")?;
+                            writeln!(
+                                output,
+                                "    match count truncated at configured/safety limit"
+                            )?;
                         }
                     }
                     Ok(())
@@ -483,8 +686,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     for item in &report.analyses {
                         writeln!(
                             output,
-                            "line {}\t{}\t{}",
-                            item.line,
+                            "{}\t{}\t{}",
+                            item.line.map_or_else(
+                                || "position unavailable".to_owned(),
+                                |line| format!("line {line}"),
+                            ),
                             item.report
                                 .layers
                                 .first()
@@ -499,6 +705,101 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 output::OutputFormat::Jsonl => output::print_batch_jsonl(&report)?,
                 output::OutputFormat::Csv => output::print_batch_csv(&report)?,
             }
+        }
+        Command::Report(args) => {
+            let report = report::generate(
+                &args.path,
+                args.rules.as_deref(),
+                args.max_entries,
+                args.max_depth,
+                args.max_tokens,
+            )?;
+            has_findings |= report.summary.total_findings > 0;
+            report::print(&report, args.format)?;
+        }
+        Command::Scan(args) => {
+            let report = scan::scan(
+                &args.path,
+                scan::ScanOptions {
+                    recursive: args.recursive,
+                    rule_file: args.rules.as_deref(),
+                    includes: &args.include,
+                    excludes: &args.exclude,
+                    max_files: args.max_files,
+                    max_file_size: args.max_file_size,
+                    max_total_size: args.max_total_size,
+                    max_entries: args.max_entries,
+                    max_depth: args.max_depth,
+                    max_tokens: args.max_tokens,
+                },
+            )?;
+            has_findings |= report.summary.total_findings > 0;
+            has_operational_issues |= report.summary.unreadable > 0 || report.summary.failed > 0;
+            scan::print(&report, args.format)?;
+        }
+        Command::Evidence(args) => match args.command {
+            EvidenceCommand::Create(args) => {
+                let target = destination
+                    .as_deref()
+                    .context("--output DIRECTORY is required for evidence create")?;
+                let report = evidence::create(
+                    &args.path,
+                    target,
+                    evidence::CreateOptions {
+                        rule_file: args.rules.as_deref(),
+                        include_sample: args.include_sample,
+                        max_entries: args.max_entries,
+                        max_depth: args.max_depth,
+                        max_tokens: args.max_tokens,
+                        force: cli.force,
+                    },
+                )?;
+                has_findings |= report.total_findings > 0;
+                output::with_output(|output| {
+                    writeln!(
+                        output,
+                        "Created evidence bundle: {}",
+                        output::terminal_safe(&report.bundle)
+                    )?;
+                    writeln!(output, "Files: {}", report.files_written)?;
+                    writeln!(output, "Findings: {}", report.total_findings)?;
+                    writeln!(
+                        output,
+                        "Source sample included: {}",
+                        report.source_sample_included
+                    )?;
+                    if report.replaced_existing {
+                        writeln!(output, "Replaced existing target: true")?;
+                    }
+                    if let Some(warning) = &report.cleanup_warning {
+                        writeln!(
+                            output,
+                            "Cleanup warning: {}",
+                            output::terminal_safe(warning)
+                        )?;
+                    }
+                    Ok(())
+                })?;
+            }
+            EvidenceCommand::Verify(args) => {
+                let report = evidence::verify(&args.path)?;
+                explicit_findings_status |= !report.valid;
+                output::print_json_or(&report, args.json, |output| {
+                    writeln!(output, "Bundle: {}", output::terminal_safe(&report.bundle))?;
+                    writeln!(output, "Valid: {}", report.valid)?;
+                    writeln!(output, "Entries checked: {}", report.entries_checked)?;
+                    writeln!(output, "Bytes checked: {}", report.total_bytes_checked)?;
+                    for error in &report.errors {
+                        writeln!(output, "Error: {}", output::terminal_safe(error))?;
+                    }
+                    Ok(())
+                })?;
+            }
+        },
+        Command::Diff(args) => {
+            let report = diff::compare(&args.left, &args.right)?;
+            explicit_findings_status |= report.summary.has_changes;
+            diff::print(&report, args.json)?;
         }
         Command::Encode(args) => {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
@@ -583,8 +884,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 for analysis in &event.report.analyses {
                                     writeln!(
                                         output,
-                                        "line {}\t{}",
-                                        analysis.line,
+                                        "{}\t{}",
+                                        analysis.line.map_or_else(
+                                            || "position unavailable".to_owned(),
+                                            |line| format!("line {line}"),
+                                        ),
                                         output::terminal_safe(&analysis.report.final_value)
                                     )?;
                                 }
@@ -621,7 +925,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         }
     }
 
-    let outcome = if fail_on_findings && has_findings {
+    let outcome = if has_operational_issues {
+        RunOutcome::PartialFailure
+    } else if explicit_findings_status || fail_on_findings && has_findings {
         RunOutcome::Findings
     } else {
         RunOutcome::Success
@@ -630,10 +936,10 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         eprintln!(
             "[banshee] completed in {:.3}s; findings={has_findings}; exit={}",
             started.elapsed().as_secs_f64(),
-            if outcome == RunOutcome::Findings {
-                1
-            } else {
-                0
+            match outcome {
+                RunOutcome::Success => 0,
+                RunOutcome::Findings => 1,
+                RunOutcome::PartialFailure => 2,
             }
         );
     }

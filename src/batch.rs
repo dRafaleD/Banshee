@@ -19,6 +19,7 @@ pub struct BatchReport {
     pub analyses: Vec<TokenAnalysis>,
     pub iocs: IocReport,
     pub entropy: EntropyReport,
+    pub positions_available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binary: Option<BinaryInfo>,
 }
@@ -32,19 +33,29 @@ pub struct BinaryInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TokenAnalysis {
-    pub line: usize,
+    pub line: Option<usize>,
     pub token: String,
     pub report: AnalysisReport,
 }
 
 pub fn analyze(input: &str, max_depth: u8, max_tokens: usize) -> BatchReport {
+    analyze_with_source(input, max_depth, max_tokens, "input")
+}
+
+pub fn analyze_with_source(
+    input: &str,
+    max_depth: u8,
+    max_tokens: usize,
+    source: &str,
+) -> BatchReport {
+    let analysis_input = crate::ioc::redact_sensitive_text(input);
     let analyzer = Analyzer::new(max_depth);
     let mut seen = HashSet::new();
     let mut analyses = Vec::new();
     let mut tokens_scanned = 0;
     let mut token_limit_reached = false;
 
-    'lines: for (line_index, line) in input.lines().enumerate() {
+    'lines: for (line_index, line) in analysis_input.lines().enumerate() {
         for raw_token in line.split_whitespace() {
             let token = clean_token(raw_token);
             if token.len() < 4 || token.len() > MAX_TOKEN_BYTES || !seen.insert(token.to_owned()) {
@@ -59,7 +70,7 @@ pub fn analyze(input: &str, max_depth: u8, max_tokens: usize) -> BatchReport {
             let report = analyzer.analyze(token);
             if !report.layers.is_empty() || !report.findings.is_empty() {
                 analyses.push(TokenAnalysis {
-                    line: line_index + 1,
+                    line: Some(line_index + 1),
                     token: token.to_owned(),
                     report,
                 });
@@ -72,15 +83,31 @@ pub fn analyze(input: &str, max_depth: u8, max_tokens: usize) -> BatchReport {
         tokens_scanned,
         token_limit_reached,
         analyses,
-        iocs: extract(input, ExtractOptions::default()),
+        iocs: extract(
+            input,
+            ExtractOptions {
+                source: source.to_owned(),
+                ..ExtractOptions::default()
+            },
+        ),
         entropy: analyze_entropy(input),
+        positions_available: true,
         binary: None,
     }
 }
 
 pub fn analyze_bytes(input: &[u8], max_depth: u8, max_tokens: usize) -> BatchReport {
+    analyze_bytes_with_source(input, max_depth, max_tokens, "input")
+}
+
+pub fn analyze_bytes_with_source(
+    input: &[u8],
+    max_depth: u8,
+    max_tokens: usize,
+    source: &str,
+) -> BatchReport {
     if let Ok(text) = std::str::from_utf8(input) {
-        return analyze(text, max_depth, max_tokens);
+        return analyze_with_source(text, max_depth, max_tokens, source);
     }
 
     let container = Analyzer::new(max_depth).analyze_bytes(input);
@@ -94,13 +121,30 @@ pub fn analyze_bytes(input: &[u8], max_depth: u8, max_tokens: usize) -> BatchRep
     } else {
         extract_printable_strings(input)
     };
-    let mut report = analyze(&analysis_text, max_depth, max_tokens);
+    let mut report = analyze_with_source(&analysis_text, max_depth, max_tokens, source);
     report.input_bytes = input.len();
     report.entropy = entropy_bytes(input);
+    report.positions_available = false;
+    for analysis in &mut report.analyses {
+        analysis.line = None;
+    }
+    report.iocs.positions_available = false;
+    for ioc in &mut report.iocs.iocs {
+        ioc.first_line = None;
+        ioc.last_line = None;
+        ioc.first_column = None;
+        ioc.locations.clear();
+        ioc.locations_truncated = false;
+    }
+    let mut container_layers = container.layers;
+    for layer in &mut container_layers {
+        layer.input = crate::ioc::redact_sensitive_text(&layer.input);
+        layer.output = crate::ioc::redact_sensitive_text(&layer.output);
+    }
     report.binary = Some(BinaryInfo {
         detected_format: compression.unwrap_or("unknown").to_owned(),
         extracted_strings,
-        container_layers: container.layers,
+        container_layers,
     });
     report
 }
@@ -150,7 +194,9 @@ mod tests {
         let report = analyze("aGVsbG8= 68656c6c6f source=8.8.8.8", 8, 100);
         assert_eq!(report.analyses.len(), 3);
         assert_eq!(report.analyses[0].report.final_value, "hello");
+        assert_eq!(report.analyses[0].line, Some(1));
         assert!(report.iocs.iocs.iter().any(|ioc| ioc.value == "8.8.8.8"));
+        assert!(report.positions_available);
     }
 
     #[test]
@@ -180,5 +226,34 @@ mod tests {
                 .any(|item| item.report.final_value == "hello")
         );
         assert!(report.iocs.iocs.iter().any(|ioc| ioc.value == "8.8.8.8"));
+        assert!(!report.positions_available);
+        assert!(
+            report
+                .analyses
+                .iter()
+                .all(|analysis| analysis.line.is_none())
+        );
+        assert!(
+            report
+                .iocs
+                .iocs
+                .iter()
+                .all(|ioc| ioc.first_line.is_none() && ioc.locations.is_empty())
+        );
+    }
+
+    #[test]
+    fn redacts_secrets_from_compressed_container_previews() {
+        let secret = "AKIA1234567890ABCDEF";
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(format!("api_key={secret}").as_bytes())
+            .expect("compress");
+        let bytes = encoder.finish().expect("finish gzip");
+
+        let report = analyze_bytes(&bytes, 8, 100);
+        let serialized = serde_json::to_string(&report).expect("serialize report");
+        assert!(!serialized.contains(secret));
+        assert!(serialized.contains("redacted"));
     }
 }

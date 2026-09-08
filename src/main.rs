@@ -4,6 +4,7 @@ fn main() -> ExitCode {
     match banshee::run() {
         Ok(banshee::RunOutcome::Success) => ExitCode::SUCCESS,
         Ok(banshee::RunOutcome::Findings) => ExitCode::from(1),
+        Ok(banshee::RunOutcome::PartialFailure) => ExitCode::from(2),
         Err(error) => {
             eprintln!("error: {error:#}");
             ExitCode::from(2)
