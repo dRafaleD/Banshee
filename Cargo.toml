@@ -34,7 +34,7 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 url = "2.5"
 x509-parser = { version = "0.18", features = ["verify"] }
 xz2 = "0.1"
-zip = { version = "7.2", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 assert_cmd = "2.0"
