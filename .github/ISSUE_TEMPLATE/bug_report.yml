@@ -1,0 +1,25 @@
+name: Bug report
+description: Report incorrect behavior with a harmless reproduction.
+body:
+  - type: markdown
+    attributes:
+      value: 'For vulnerabilities, follow SECURITY.md. Do not include secrets or private samples.'
+  - type: input
+    id: version
+    attributes:
+      label: Banshee version or commit
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and architecture
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Command and synthetic reproduction
+      description: Include expected and actual output, plus exit status.
+    validations:
+      required: true

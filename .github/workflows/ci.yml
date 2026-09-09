@@ -7,11 +7,24 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Check and package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -20,3 +33,12 @@ jobs:
       - run: cargo test --all-targets --locked
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo build --release --locked
+      - name: Package and smoke-test release binary
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: banshee-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

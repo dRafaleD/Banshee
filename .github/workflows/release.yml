@@ -1,0 +1,92 @@
+name: Release packages
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to package (must contain release infrastructure)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Validate tag syntax
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
+            throw 'Expected a version tag such as v0.2.0 or v0.2.0-rc.1'
+          }
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+          persist-credentials: false
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check tag against package version
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed' }
+          $package = $metadata.packages | Where-Object name -EQ banshee
+          if ($env:RELEASE_TAG -ne "v$($package.version)") { throw 'Tag/version mismatch' }
+      - run: cargo fmt --all -- --check
+      - run: cargo test --all-targets --locked
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo build --release --locked
+      - name: Audit release dependencies
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+      - shell: pwsh
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+  draft:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Verify checksums and create a draft for review
+        shell: bash
+        run: |
+          cd dist
+          sha256sum --check *.sha256
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "Banshee $RELEASE_TAG" --generate-notes ./*

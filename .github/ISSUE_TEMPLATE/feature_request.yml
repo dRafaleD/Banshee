@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose a focused offline analysis workflow.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Analyst problem
+      description: What task is difficult today? Give a harmless example.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed command and output
+      description: Include offline behavior, resource limits and alternatives considered.
+    validations:
+      required: true

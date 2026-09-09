@@ -582,8 +582,8 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 } else {
                                     &file_types
                                 },
-                                rule.min_entropy.map_or(0.0, |value| value),
-                                rule.max_entropy.map_or(8.0, |value| value),
+                                rule.min_entropy.unwrap_or(0.0),
+                                rule.max_entropy.unwrap_or(8.0),
                                 rule.all_conditions,
                                 rule.any_conditions,
                                 rule.min_matches,

@@ -7,7 +7,8 @@ use clap::{Args, Parser, Subcommand};
     name = "banshee",
     version,
     about = "Offline, pipe-friendly security analysis toolkit",
-    long_about = None
+    long_about = None,
+    after_help = "QUICK START:\n  banshee whatis aGVsbG8=\n  banshee extract --file application.log --defang\n  banshee report sample.bin --format json\n  banshee evidence verify case-evidence\n\nUse banshee <command> --help for inputs, formats, and limits.\nExit codes: 0 = success; 1 = findings/differences/failed integrity; 2 = operational error.\nFindings normally require --fail-on-findings; diff and evidence verify use status 1 directly."
 )]
 pub struct Cli {
     /// Exit with status 1 when analysis finds indicators or suspicious content

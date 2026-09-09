@@ -1,0 +1,51 @@
+# Releasing Banshee
+
+Release tags are immutable. A pushed tag is distinct from a GitHub Release with
+notes and downloadable assets. Never move a published tag to repair CI.
+
+## Prepare
+
+1. Choose a new version. During 0.x, use minor releases for interface changes and
+   patch releases for compatible fixes; document any schema/CLI incompatibility.
+2. Update Cargo.toml and Cargo.lock together, and move Unreleased changelog entries
+   into a dated release section. Review all security and compatibility notes.
+3. Run format, tests, Clippy, release build and `cargo audit`; inspect both Linux
+   and Windows CI results for the exact commit being released.
+4. Run `pwsh -File scripts/package.ps1` after building. It refuses existing archives,
+   generates completions/manuals, unpacks and tests the binary, and emits SHA-256
+   sidecars in `dist/`. Move previous output aside before packaging the same version.
+
+## Publish
+
+Create an annotated tag matching Cargo's version and push that tag. The release
+workflow checks the version, runs tests and builds Linux x86_64 GNU and Windows
+x86_64 MSVC packages. Only after both jobs pass does it create a **draft** GitHub
+Release. Review the generated notes, mark alpha releases as prereleases, then
+publish. Do not describe a draft as publicly available.
+
+Manual workflow dispatch accepts an existing version tag containing this workflow
+and packaging script. The original v0.1.0 tag predates them and cannot use this
+pipeline; use a new version for the first packaged release. Existing releases are
+not overwritten automatically; inspect any partial draft before retrying.
+
+## Verify downloads
+
+On Linux, download the archive and matching sidecar into the same directory:
+
+```sh
+sha256sum --check banshee-VERSION-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf banshee-VERSION-x86_64-unknown-linux-gnu.tar.gz
+```
+
+On PowerShell, compare the hash with the first field in the sidecar:
+
+```powershell
+$archive = 'banshee-VERSION-x86_64-pc-windows-msvc.zip'
+$expected = ((Get-Content "$archive.sha256").Trim() -split '\s+')[0]
+if ((Get-FileHash $archive -Algorithm SHA256).Hash -ine $expected) { throw 'Checksum mismatch' }
+Expand-Archive $archive
+```
+
+Checksums detect corrupted or inconsistent downloads; they are not signatures.
+Linux GNU binaries are built on ubuntu-latest and may need a recent glibc; they
+are not static/musl builds. Other architectures and macOS are not packaged.
