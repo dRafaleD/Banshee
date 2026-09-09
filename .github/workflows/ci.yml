@@ -36,7 +36,7 @@ jobs:
       - name: Package and smoke-test release binary
         shell: pwsh
         run: ./scripts/package.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: banshee-${{ matrix.os }}
           path: dist/*
