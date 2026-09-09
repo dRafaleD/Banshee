@@ -8,7 +8,8 @@ notes and downloadable assets. Never move a published tag to repair CI.
 1. Choose a new version. During 0.x, use minor releases for interface changes and
    patch releases for compatible fixes; document any schema/CLI incompatibility.
 2. Update Cargo.toml and Cargo.lock together, and move Unreleased changelog entries
-   into a dated release section. Review all security and compatibility notes.
+   into a dated release section. Add `docs/releases/vVERSION.md` with the public
+   release notes. Review all security and compatibility notes.
 3. Run format, tests, Clippy, release build and `cargo audit`; inspect both Linux
    and Windows CI results for the exact commit being released.
 4. Run `pwsh -File scripts/package.ps1` after building. It refuses existing archives,
@@ -20,7 +21,7 @@ notes and downloadable assets. Never move a published tag to repair CI.
 Create an annotated tag matching Cargo's version and push that tag. The release
 workflow checks the version, runs tests and builds Linux x86_64 GNU and Windows
 x86_64 MSVC packages. Only after both jobs pass does it create a **draft** GitHub
-Release. Review the generated notes, mark alpha releases as prereleases, then
+Release using the versioned release notes. Review the notes and alpha prerelease flag, then
 publish. Do not describe a draft as publicly available.
 
 Manual workflow dispatch accepts an existing version tag containing this workflow

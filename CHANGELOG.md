@@ -5,6 +5,13 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+No changes recorded yet.
+
+## 0.1.1 — 2026-09-09
+
+First release prepared with the cross-platform packaging workflow. No report or
+rule schema migration is required. Downloads are available after release publication.
+
 ### Added
 
 - Linux and Windows CI with packaged-binary smoke checks.
