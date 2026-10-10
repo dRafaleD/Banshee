@@ -28,3 +28,8 @@ GitHub delivers workflow failure notifications according to each maintainer's
 account settings. This project does not silently change those preferences or
 promise an external alert service. No public security issues are created
 automatically from potentially sensitive scanner output.
+
+GitHub schedules run from the default branch. These expanded checks are
+implemented and verified on the quality-cycle development branch; their new
+weekly schedules take effect after review/merge to master. A branch push/manual
+run verifies the jobs, not future scheduler delivery.

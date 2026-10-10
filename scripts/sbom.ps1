@@ -22,6 +22,10 @@ try {
         $sbom.metadata.component.name -ne 'banshee' -or $sbom.components.Count -eq 0) {
         throw 'Generated SBOM does not describe Banshee dependencies.'
     }
+    $targets = @($sbom.metadata.properties | Where-Object name -EQ 'cdx:rustc:sbom:target:triple')
+    if ($targets.Count -ne 1 -or $targets[0].value -ne $triple) {
+        throw 'Generated SBOM target does not match the native build.'
+    }
     $output = [IO.Path]::GetFullPath($OutputPath)
     New-Item -ItemType Directory -Force -Path (Split-Path $output -Parent) | Out-Null
     Copy-Item -LiteralPath $generated -Destination $output

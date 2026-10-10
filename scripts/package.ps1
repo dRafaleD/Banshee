@@ -39,9 +39,13 @@ try {
     Copy-Item -LiteralPath $binary -Destination $stage
     if ($SbomPath) {
         $sbom = Get-Content -LiteralPath $SbomPath -Raw | ConvertFrom-Json
-        if ($sbom.bomFormat -ne 'CycloneDX' -or $sbom.metadata.component.name -ne 'banshee' -or
+        if ($sbom.bomFormat -ne 'CycloneDX' -or $sbom.specVersion -ne '1.5' -or $sbom.metadata.component.name -ne 'banshee' -or
             $sbom.metadata.component.version -ne $package.version -or $sbom.components.Count -eq 0) {
             throw 'SBOM must describe this Banshee version and contain dependencies.'
+        }
+        $targets = @($sbom.metadata.properties | Where-Object name -EQ 'cdx:rustc:sbom:target:triple')
+        if ($targets.Count -ne 1 -or $targets[0].value -ne $triple) {
+            throw 'SBOM target must match the packaging host.'
         }
         Copy-Item -LiteralPath $SbomPath -Destination (Join-Path $stage 'banshee.sbom.json')
         Copy-Item -LiteralPath $SbomPath -Destination (Join-Path $output "$name.sbom.json")

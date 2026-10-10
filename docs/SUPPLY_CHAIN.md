@@ -3,7 +3,9 @@
 CI and release packaging produce one target-specific CycloneDX 1.5 inventory per
 archive. `scripts/sbom.ps1` checks that generation did not change Cargo.lock;
 `scripts/package.ps1 -SbomPath target/banshee.sbom.json` includes that inventory
-inside the archive and uploads it alongside the archive. This inventory covers
+inside the archive and uploads it alongside the archive. Packaging rejects
+inventories for a different version, package or native target; rejection tests
+run on all five CI targets. This inventory covers
 Cargo dependencies, not every OS library, compiler or tool used by the build.
 
 Trusted CI runs attest candidate archives; pull requests do not receive signing

@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
@@ -100,6 +100,9 @@ jobs:
           if ($archives.Count -ne 1 -or $sboms.Count -ne 1) { throw 'Expected one archive and SBOM' }
           "archive=$($archives[0].FullName)" >> $env:GITHUB_OUTPUT
           "sbom=$($sboms[0].FullName)" >> $env:GITHUB_OUTPUT
+      - name: Reject incompatible dependency inventories
+        shell: pwsh
+        run: ./scripts/test-package.ps1 -SbomPath target/banshee.sbom.json
       - name: Attest release provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -119,7 +122,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Provenance verification failed' }
           gh attestation verify $env:ARCHIVE --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-digest $env:GITHUB_SHA --source-ref $env:GITHUB_REF --predicate-type https://cyclonedx.org/bom
           if ($LASTEXITCODE -ne 0) { throw 'SBOM attestation verification failed' }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-${{ matrix.os }}
           path: dist/*
@@ -136,11 +139,11 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: release-*
           merge-multiple: true

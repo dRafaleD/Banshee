@@ -273,7 +273,7 @@ the other platform passed.
 ## Testing
 
 The next development cycle is tracked in [the quality plan](docs/QUALITY_PLAN.md).
-Parser resilience is the first phase: ordinary tests exercise synthetic truncated
+Parser resilience checks include ordinary tests for synthetic truncated
 and mutated PE/ELF/archive inputs and expansion limits. For bounded sanitizer fuzz
 campaigns and failure reproduction, see [fuzz/README.md](fuzz/README.md).
 

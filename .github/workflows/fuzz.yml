@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
@@ -36,7 +36,7 @@ jobs:
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - run: cargo +stable run --locked --example fuzz_seeds -- fuzz/corpus/file_inspect
       - run: cargo +nightly fuzz run file_inspect -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: failure()
         with:
           name: parser-fuzz-failure

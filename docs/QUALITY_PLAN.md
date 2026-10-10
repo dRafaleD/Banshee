@@ -8,12 +8,12 @@ Record results and limitations here. Completed v0.1 features remain in ROADMAP.m
 
 | Phase | Scope | Acceptance | Status |
 | --- | --- | --- | --- |
-| 1. Parser resilience | PE/ELF, ZIP/TAR and gzip/XZ/BZip2 fuzzing; input and expansion limits | Synthetic mutation tests, sanitizer fuzz runs and resource assertions; reproducible failures retained | Completed locally; remote CI pending |
-| 2. Release provenance | SBOM, build attestations, action SHA pinning, minimum workflow permissions | Verify exact candidate archives and inventory; future releases use the same signing controls | Local package passed; native CI pending |
-| 3. Platform coverage | macOS, Linux ARM64, then macOS ARM64 | Each advertised target builds and its packaged binary runs on that architecture | Native CI pending |
-| 4. Report compatibility | Versioned schema, saved fixtures, migration/compatibility policy | Older saved reports compare predictably; schema changes are documented | Local tests passed; native CI pending |
-| 5. Daily CLI use | Windows/Linux installation, help, troubleshooting and command examples | Documented installation and example commands work on supported platforms | Windows tests passed; native CI pending |
-| 6. Ongoing security | Scheduled audits, clear support policy, tracked security review | Failures stay visible and supported versions/reporting channels are documented | Both local lockfile audits passed; remote checks pending |
+| 1. Parser resilience | PE/ELF, ZIP/TAR and gzip/XZ/BZip2 fuzzing; input and expansion limits | Synthetic mutation tests, sanitizer fuzz runs and resource assertions; reproducible failures retained | Complete; local and GitHub fuzz passed |
+| 2. Release provenance | SBOM, build attestations, action SHA pinning, minimum workflow permissions | Verify exact candidate archives and inventory; future releases use the same signing controls | Complete; five candidate archives attested and verified |
+| 3. Platform coverage | macOS, Linux ARM64, then macOS ARM64 | Each advertised target builds and its packaged binary runs on that architecture | Complete; all five native targets passed |
+| 4. Report compatibility | Versioned schema, saved fixtures, migration/compatibility policy | Older saved reports compare predictably; schema changes are documented | Complete; all native regression suites passed |
+| 5. Daily CLI use | Windows/Linux installation, help, troubleshooting and command examples | Documented installation and example commands work on supported platforms | Complete; isolated installation/examples passed on five targets |
+| 6. Ongoing security | Scheduled audits, clear support policy, tracked security review | Failures stay visible and supported versions/reporting channels are documented | Complete on development branch; expanded schedules activate on merge |
 
 ## Phase 1 delivery
 
@@ -40,8 +40,8 @@ Record results and limitations here. Completed v0.1 features remain in ROADMAP.m
 - File reads now stop after the limit plus one detection byte. Memory inspection
   rejects oversized inputs before hashing. Added boundary, high-expansion gzip,
   mutation and truncation regressions.
-- Added pull-request/push/weekly fuzz smoke workflow with failure artifacts.
-  The workflow has not yet been pushed or verified on GitHub.
+- Added pull-request/push/weekly fuzz smoke workflow with failure artifacts;
+  the branch push has now been verified on GitHub (see results below).
 - The fuzz workspace keeps its own dependency lockfile; ordinary regression
   tests use the application's root lockfile. Neither is an unpinned dependency run.
 
@@ -64,8 +64,33 @@ Record results and limitations here. Completed v0.1 features remain in ROADMAP.m
   and smoke-tested with its 138-component Windows Cargo inventory. Windows
   isolated installation/examples, formatting, Clippy and actionlint passed.
 
-Remote validation results will be recorded below after the exact branch commit
-passes. No new release/tag is authorized or created by this development cycle.
+## GitHub verification (2026-10-10)
+
+Implementation commit `55ae93286682c240a6cf4325cfce278cedf817d0` on
+`codex/quality-cycle-20261010` passed:
+
+- [Native CI and provenance](https://github.com/dRafaleD/Banshee/actions/runs/38075397375):
+  all five native test/build/package/installer jobs and all five provenance jobs
+  succeeded. Both provenance and CycloneDX assertions verified archive bytes,
+  repository, signer workflow, source branch and source commit for each package.
+- [Dependency audit](https://github.com/dRafaleD/Banshee/actions/runs/38075397441):
+  application and fuzz lockfiles passed with warnings denied.
+- [Parser fuzz smoke](https://github.com/dRafaleD/Banshee/actions/runs/38075397497):
+  seed 1835644270, 676,572 executions in 61 seconds, exit code 0.
+- Downloaded Windows/Linux/Apple Silicon candidates were independently checksum
+  checked; downloaded Windows package ran locally and its internal/external SBOMs
+  matched. Windows archive provenance and SBOM were also independently verified
+  with the exact source commit/ref using the GitHub CLI.
+- SBOM counts: Windows/macOS 138 Cargo components; Linux 139. These are target
+  dependency inventories, not OS/runtime-library inventories.
+
+Final refinements upgrade checkout/artifact actions to SHA-pinned Node 24 versions
+and reject wrong-target inventories. Local negative inventory tests passed; all
+changes remain subject to the branch's latest CI status before handoff.
+
+No new release/tag is authorized or created. New public platform downloads and
+release-tag attestations await a future authorized release. Existing v0.1.1 stays
+unchanged. GitHub's expanded schedules activate only after merge to master.
 
 Follow-up work discovered during a phase belongs in its result notes or the next
 phase; do not silently expand into all six phases at once.
