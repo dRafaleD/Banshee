@@ -2,10 +2,10 @@ name: Dependency audit
 
 on:
   push:
-    branches: [master]
-    paths: [Cargo.toml, Cargo.lock, .github/workflows/security.yml]
+    branches: [master, 'codex/**']
+    paths: [Cargo.toml, Cargo.lock, 'fuzz/Cargo.toml', 'fuzz/Cargo.lock', .github/workflows/security.yml]
   pull_request:
-    paths: [Cargo.toml, Cargo.lock, .github/workflows/security.yml]
+    paths: [Cargo.toml, Cargo.lock, 'fuzz/Cargo.toml', 'fuzz/Cargo.lock', .github/workflows/security.yml]
   schedule:
     - cron: '23 7 * * 1'
   workflow_dispatch:
@@ -18,8 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-audit --locked
-      - run: cargo audit
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit application and fuzz dependencies
+        run: |
+          cargo audit --file Cargo.lock --deny warnings
+          cargo audit --file fuzz/Cargo.lock --deny warnings

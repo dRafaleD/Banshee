@@ -1,0 +1,47 @@
+name: Parser fuzz smoke
+
+on:
+  pull_request:
+    paths: ['src/file_inspect.rs', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
+  push:
+    branches: [master, 'codex/**']
+    paths: ['src/file_inspect.rs', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
+  schedule:
+    - cron: '41 6 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> target
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo +stable run --locked --example fuzz_seeds -- fuzz/corpus/file_inspect
+      - run: cargo +nightly fuzz run file_inspect -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: parser-fuzz-failure
+          path: |
+            fuzz/artifacts/
+            fuzz/corpus/
+          if-no-files-found: ignore
+          retention-days: 14

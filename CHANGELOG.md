@@ -5,7 +5,19 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
-No changes recorded yet.
+### Added
+
+- Six-phase quality plan, synthetic parser mutation checks and bounded cargo-fuzz infrastructure.
+- Native Linux ARM64 and macOS Intel/Apple Silicon CI/package candidates.
+- Target-specific CycloneDX inventories and verified build/SBOM attestations;
+  SHA-pinned actions with scoped signing permissions.
+- Safe source installers, frozen report compatibility fixtures and documented
+  ongoing dependency/fuzz review procedures.
+
+### Fixed
+
+- Apply the 256 MiB inspection input cap to memory-based callers and reads that
+  grow past their initial file metadata size.
 
 ## 0.1.1 — 2026-09-09
 

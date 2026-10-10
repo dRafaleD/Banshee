@@ -1,0 +1,22 @@
+[package]
+name = "banshee-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+banshee = { path = ".." }
+
+[[bin]]
+name = "file_inspect"
+path = "fuzz_targets/file_inspect.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

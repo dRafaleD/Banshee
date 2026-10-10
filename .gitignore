@@ -1,5 +1,9 @@
 /target/
 /dist/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/banshee.cyclonedx.json
 *.pem
 *.key
 .env

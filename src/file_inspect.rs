@@ -120,12 +120,21 @@ pub fn inspect_file(path: &Path, max_entries: usize) -> Result<FileReport> {
     if metadata.len() > MAX_INPUT_BYTES {
         bail!("file exceeds the 256 MiB inspection limit");
     }
-    let bytes =
-        std::fs::read(path).with_context(|| format!("failed to read '{}'", path.display()))?;
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("failed to open '{}'", path.display()))?;
+    let bytes = read_bounded(
+        file,
+        MAX_INPUT_BYTES,
+        "file exceeds the 256 MiB inspection limit",
+    )
+    .with_context(|| format!("failed to read '{}'", path.display()))?;
     inspect_bytes(&bytes, path.display().to_string(), max_entries)
 }
 
 pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<FileReport> {
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        bail!("file exceeds the 256 MiB inspection limit");
+    }
     if max_entries == 0 {
         bail!("max_entries must be greater than zero");
     }
@@ -214,12 +223,18 @@ fn attach_executable(report: &mut FileReport, executable: ExecutableReport) {
 }
 
 fn read_limited<R: Read>(reader: R) -> Result<Vec<u8>> {
+    read_bounded(
+        reader,
+        MAX_DECOMPRESSED_BYTES,
+        "decompressed payload exceeds the 64 MiB safety limit",
+    )
+}
+
+fn read_bounded<R: Read>(reader: R, limit: u64, limit_message: &str) -> Result<Vec<u8>> {
     let mut output = Vec::new();
-    reader
-        .take(MAX_DECOMPRESSED_BYTES + 1)
-        .read_to_end(&mut output)?;
-    if output.len() as u64 > MAX_DECOMPRESSED_BYTES {
-        bail!("decompressed payload exceeds the 64 MiB safety limit");
+    reader.take(limit + 1).read_to_end(&mut output)?;
+    if output.len() as u64 > limit {
+        bail!("{limit_message}");
     }
     Ok(output)
 }
@@ -1354,6 +1369,106 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     use super::{archive_path_is_safe, inspect_bytes};
+
+    #[test]
+    fn bounded_read_accepts_exact_limit_and_stops_after_first_excess_byte() {
+        let mut input = Cursor::new(b"1234567890123456".as_slice());
+        let error = super::read_bounded(&mut input, 8, "fixture exceeds limit")
+            .expect_err("reject oversized stream");
+        assert_eq!(input.position(), 9);
+        assert!(error.to_string().contains("fixture exceeds limit"));
+        assert_eq!(
+            super::read_bounded(Cursor::new(b"12345678"), 8, "too large").unwrap(),
+            b"12345678"
+        );
+    }
+
+    #[test]
+    fn memory_inspection_rejects_oversized_input_before_hashing() {
+        let bytes = vec![0_u8; super::MAX_INPUT_BYTES as usize + 1];
+        let error = inspect_bytes(&bytes, "synthetic".into(), 1).unwrap_err();
+        assert!(error.to_string().contains("256 MiB"));
+    }
+
+    #[test]
+    fn compressed_payload_limit_is_enforced_for_high_expansion_gzip() {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let chunk = [0_u8; 64 * 1024];
+        for _ in 0..super::MAX_DECOMPRESSED_BYTES / chunk.len() as u64 {
+            encoder.write_all(&chunk).unwrap();
+        }
+        encoder.write_all(b"x").unwrap();
+        let compressed = encoder.finish().unwrap();
+        let error = inspect_bytes(&compressed, "synthetic.gz".into(), 1).unwrap_err();
+        assert!(format!("{error:#}").contains("64 MiB safety limit"));
+    }
+
+    #[test]
+    fn synthetic_parser_mutations_and_truncations_do_not_panic() {
+        let tar = tar_fixture();
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        zip.start_file("synthetic.txt", SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"safe fixture").unwrap();
+        let zip = zip.finish().unwrap().into_inner();
+        let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gzip.write_all(&tar).unwrap();
+        let gzip = gzip.finish().unwrap();
+        let mut bzip = BzEncoder::new(Vec::new(), BzipCompression::fast());
+        bzip.write_all(&tar).unwrap();
+        let bzip = bzip.finish().unwrap();
+        let mut xz = XzEncoder::new(Vec::new(), 1);
+        xz.write_all(&tar).unwrap();
+        let xz = xz.finish().unwrap();
+        for (name, seed) in [
+            ("pe", pe64_fixture()),
+            ("elf", elf64_fixture()),
+            ("tar", tar),
+            ("zip", zip),
+            ("gzip", gzip),
+            ("bzip2", bzip),
+            ("xz", xz),
+        ] {
+            assert!(inspect_bytes(&seed, name.into(), 2).is_ok(), "seed {name}");
+            for length in (0..seed.len()).step_by((seed.len() / 128).max(1)) {
+                assert_parser_bounds(&seed[..length], name);
+            }
+            for offset in (0..seed.len()).step_by((seed.len() / 128).max(1)) {
+                for replacement in [0_u8, 0x7f, 0xff] {
+                    let mut mutated = seed.clone();
+                    let end = (offset + 8).min(mutated.len());
+                    mutated[offset..end].fill(replacement);
+                    assert_parser_bounds(&mutated, name);
+                }
+            }
+        }
+    }
+
+    fn assert_parser_bounds(bytes: &[u8], name: &str) {
+        if let Ok(report) = inspect_bytes(bytes, name.into(), 2) {
+            assert_eq!(report.size, bytes.len());
+            if let Some(archive) = report.archive {
+                assert!(archive.entries.len() <= 2);
+                assert!(archive.total_entries >= archive.entries.len());
+            }
+            if let Some(compression) = report.compression {
+                assert!(compression.decompressed_bytes as u64 <= super::MAX_DECOMPRESSED_BYTES);
+            }
+            if let Some(executable) = report.executable {
+                assert!(executable.section_details.len() <= super::MAX_EXECUTABLE_SECTIONS);
+                assert!(executable.imports.len() <= super::MAX_IMPORT_LIBRARIES);
+                assert!(
+                    executable
+                        .imports
+                        .iter()
+                        .map(|library| library.symbols.len())
+                        .sum::<usize>()
+                        <= super::MAX_IMPORT_SYMBOLS
+                );
+                assert!(executable.exports.len() <= super::MAX_EXPORTS);
+            }
+        }
+    }
 
     fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
         bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());

@@ -1,6 +1,9 @@
 # Requires PowerShell 7; run from the repository root after a release build.
 [CmdletBinding()]
-param()
+param(
+    [string]$OutputDirectory = '',
+    [string]$SbomPath = ''
+)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -13,7 +16,8 @@ try {
     $hostText = & rustc -vV
     if ($LASTEXITCODE -ne 0) { throw 'Rust host detection failed.' }
     $triple = ($hostText | Where-Object { $_ -match '^host: ' }) -replace '^host: ', ''
-    if ($triple -notin @('x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu')) {
+    if ($triple -notin @('x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu',
+        'aarch64-unknown-linux-gnu', 'x86_64-apple-darwin', 'aarch64-apple-darwin')) {
         throw "Unsupported packaging host: $triple"
     }
     $executable = if ($IsWindows) { 'banshee.exe' } else { 'banshee' }
@@ -23,7 +27,7 @@ try {
         throw 'Release binary does not match Cargo package version.'
     }
     $name = "banshee-$($package.version)-$triple"
-    $output = Join-Path $repoRoot 'dist'
+    $output = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $repoRoot 'dist' }
     New-Item -ItemType Directory -Force -Path $output | Out-Null
     $extension = if ($IsWindows) { 'zip' } else { 'tar.gz' }
     $archive = Join-Path $output "$name.$extension"
@@ -33,6 +37,15 @@ try {
     $stage = Join-Path $work $name
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     Copy-Item -LiteralPath $binary -Destination $stage
+    if ($SbomPath) {
+        $sbom = Get-Content -LiteralPath $SbomPath -Raw | ConvertFrom-Json
+        if ($sbom.bomFormat -ne 'CycloneDX' -or $sbom.metadata.component.name -ne 'banshee' -or
+            $sbom.metadata.component.version -ne $package.version -or $sbom.components.Count -eq 0) {
+            throw 'SBOM must describe this Banshee version and contain dependencies.'
+        }
+        Copy-Item -LiteralPath $SbomPath -Destination (Join-Path $stage 'banshee.sbom.json')
+        Copy-Item -LiteralPath $SbomPath -Destination (Join-Path $output "$name.sbom.json")
+    }
     foreach ($document in @('README.md', 'LICENSE', 'SECURITY.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'ROADMAP.md')) {
         Copy-Item -LiteralPath (Join-Path $repoRoot $document) -Destination $stage
     }

@@ -7,7 +7,8 @@ analyst workflow and expected output before proposing a new command.
 
 Use stable Rust and clone this repository. Linux builds require a C compiler,
 pkg-config and liblzma development headers; Windows builds require the MSVC C++
-build tools and Windows SDK. Run:
+build tools and Windows SDK. macOS needs Xcode command line tools and Homebrew xz;
+Unix source installer tests require Python 3. Run:
 
 ```sh
 cargo fmt --all -- --check
@@ -16,9 +17,11 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
 
-CI runs these checks on Linux and Windows and smoke-tests packaged binaries.
-Keep Cargo.lock committed. A successful local run does not replace the other
-platform's CI result.
+CI runs these checks on Windows x86_64, Linux GNU x86_64/ARM64 and macOS
+Intel/Apple Silicon, then smoke-tests packages and isolated installation.
+Keep both application and fuzz Cargo.lock files committed. A successful local
+run does not replace another platform's CI result. Review SHA-pinned action
+updates and inventory/attestation checks as described in docs/SUPPLY_CHAIN.md.
 
 ## Review expectations
 

@@ -11,11 +11,16 @@ Banshee is an offline, pipe-friendly security analysis toolkit written in Rust.
 Turn a suspicious value, local file, or log into explainable findings and
 shareable reports. Decode nested content, normalize indicators, inspect PE/ELF
 metadata, apply local rules, and preserve results in verifiable evidence bundles.
-Analysis runs locally on Linux and Windows without uploading your inputs.
+Analysis runs locally without uploading your inputs.
 
 [Quick start](#quick-guide) · [Capabilities](#choose-a-workflow) ·
 [Install](#build) · [Command examples](examples/usage.md) ·
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
+Development guides: [installation](docs/INSTALLATION.md),
+[report compatibility](docs/REPORT_COMPATIBILITY.md),
+[package provenance](docs/SUPPLY_CHAIN.md),
+[ongoing security checks](docs/SECURITY_CHECKS.md).
 
 > [!WARNING]
 > **Alpha / early draft.** Banshee is under active development. Expect incomplete,
@@ -143,14 +148,17 @@ The initial foundation includes the following commands:
 
 ### Requirements
 
-- **Linux and Windows x86_64** are covered by the CI matrix (`ubuntu-latest`
-  and `windows-latest`). The CI badge links to actual run results.
+- The native CI matrix covers **Windows x86_64, Linux x86_64/ARM64 and macOS
+  Intel/Apple Silicon**. The CI badge links to actual run results; source support
+  does not imply every platform is already available on the Releases page.
 - **Rust 1.88 or newer**. The repository selects the latest stable toolchain
   through `rust-toolchain.toml`; the minimum version is declared, not separately
   tested in the CI matrix.
 - Linux: C build tools, `pkg-config`, and liblzma development headers (on Ubuntu:
   `sudo apt-get install build-essential pkg-config liblzma-dev`). Windows: Visual
   Studio C++ build tools and a Windows SDK with the Rust MSVC toolchain.
+- macOS: Xcode command line tools and Homebrew `xz`; native installer scripts
+  also need Python 3. See the [installation guide](docs/INSTALLATION.md).
 
 > [!NOTE]
 > Banshee has not been published to crates.io during the alpha phase, so
@@ -182,6 +190,9 @@ sh scripts/install.sh
 ```
 
 Use `--prefix /chosen/path` or set `PREFIX` to choose another installation root.
+Existing installations require explicit `--force`. Windows users can run
+`pwsh -File scripts/install.ps1`; both installers offer help and a custom prefix.
+See [safe installation and troubleshooting](docs/INSTALLATION.md).
 
 ## Examples
 
@@ -260,6 +271,11 @@ For CI failures, open the badge's run log; local success alone does not prove th
 the other platform passed.
 
 ## Testing
+
+The next development cycle is tracked in [the quality plan](docs/QUALITY_PLAN.md).
+Parser resilience is the first phase: ordinary tests exercise synthetic truncated
+and mutated PE/ELF/archive inputs and expansion limits. For bounded sanitizer fuzz
+campaigns and failure reproduction, see [fuzz/README.md](fuzz/README.md).
 
 Run the same checks used by CI before opening a pull request:
 
@@ -441,9 +457,11 @@ Read the [contribution guide](CONTRIBUTING.md), [changelog](CHANGELOG.md) and
 [roadmap](ROADMAP.md). Report reproducible bugs with synthetic inputs using the
 issue forms. For vulnerabilities, follow the [security policy](SECURITY.md).
 
-CI checks formatting, tests, Clippy and release builds on Linux and Windows,
-then smoke-tests the packaged binary. A separate scheduled dependency audit checks
-published RustSec advisories. A passing audit is not a guarantee of security.
+CI checks formatting, tests, Clippy and release builds on the five native targets,
+then smoke-tests packaged binaries and isolated source installation. Trusted
+candidate/release runs verify archive provenance and dependency inventories.
+Scheduled audits cover both lockfiles; parser fuzzing retains failures for review.
+A passing check is not a guarantee of security. See [check handling](docs/SECURITY_CHECKS.md).
 
 ## License
 

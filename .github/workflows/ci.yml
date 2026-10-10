@@ -1,44 +1,130 @@
 name: CI
-
 on:
   push:
   pull_request:
-
+  workflow_dispatch:
 permissions:
   contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   test:
-    name: Check and package (${{ matrix.os }})
+    name: Check and package (${{ matrix.triple }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - os: macos-15
+            triple: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install xz
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
       - run: cargo test --all-targets --locked
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo build --release --locked
+      - name: Generate production SBOM
+        shell: pwsh
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'cargo-cyclonedx installation failed' }
+          ./scripts/sbom.ps1
       - name: Package and smoke-test release binary
         shell: pwsh
-        run: ./scripts/package.ps1
-      - uses: actions/upload-artifact@v4
+        run: ./scripts/package.ps1 -SbomPath target/banshee.sbom.json
+      - name: Test isolated source installation
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            ./scripts/test-install.ps1
+          } else {
+            bash ./scripts/test-install.sh
+            if ($LASTEXITCODE -ne 0) { throw 'Installer tests failed' }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: banshee-${{ matrix.os }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+  provenance:
+    name: Verify candidate provenance (${{ matrix.triple }})
+    needs: test
+    if: github.event_name != 'pull_request' && github.repository == 'dRafaleD/Banshee'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - os: macos-15
+            triple: aarch64-apple-darwin
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: banshee-${{ matrix.os }}
+          path: dist
+      - name: Verify archive and select SBOM
+        id: package
+        shell: bash
+        run: |
+          cd dist
+          sha256sum --check *.sha256
+          archive=$(find "$PWD" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \))
+          sbom=$(find "$PWD" -maxdepth 1 -type f -name '*.sbom.json')
+          test "$(printf '%s\n' "$archive" | wc -l)" -eq 1
+          test "$(printf '%s\n' "$sbom" | wc -l)" -eq 1
+          test -f "$archive" && test -f "$sbom"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sbom=$sbom" >> "$GITHUB_OUTPUT"
+      - name: Attest package provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+      - name: Attest production dependency inventory
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+          sbom-path: ${{ steps.package.outputs.sbom }}
+      - name: Verify both attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: |
+          gh attestation verify "$ARCHIVE" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF"
+          gh attestation verify "$ARCHIVE" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF" --predicate-type https://cyclonedx.org/bom

@@ -106,3 +106,15 @@ banshee analyze --verbose --format jsonl --file suspicious.log
 banshee completions bash > ~/.local/share/bash-completion/completions/banshee
 banshee manpage > banshee.1
 ```
+
+## Developer parser checks
+
+Use synthetic corpus files only. See [the fuzz guide](../fuzz/README.md) for setup
+and reproducing sanitizer findings; the [quality plan](../docs/QUALITY_PLAN.md)
+defines the phase acceptance criteria.
+
+```bash
+cargo test --locked file_inspect::tests
+cargo run --locked --example fuzz_seeds -- fuzz/corpus/file_inspect
+cargo +nightly fuzz run file_inspect -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
+```

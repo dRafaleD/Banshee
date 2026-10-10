@@ -15,6 +15,233 @@ use crate::rules::{RuleMatchReport, ScanReport, Severity};
 pub const REPORT_SCHEMA_VERSION: u8 = 1;
 const MAX_REPORT_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Read the wire version without assuming that the schema is supported.
+pub fn schema_version(value: &serde_json::Value) -> Result<u8> {
+    let object = value
+        .as_object()
+        .context("report root must be a JSON object")?;
+    let version = object
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .context("report is missing an integer schema_version")?;
+    u8::try_from(version).context("report schema_version is out of range")
+}
+
+/// Validate saved JSON against its version's compatibility contract.
+/// Optional historical fields remain missing; unknown additions are ignored.
+/// Errors identify schema locations, never values from the saved report.
+pub fn validate_compatibility(value: &serde_json::Value) -> Result<u8> {
+    let version = schema_version(value)?;
+    match version {
+        1 => validate_v1(value)?,
+        _ => bail!("unsupported report schema version {version}; expected 1"),
+    }
+    Ok(version)
+}
+
+#[derive(Clone, Copy)]
+enum SchemaType {
+    Object,
+    Array,
+    String,
+    Unsigned,
+    Number,
+    Boolean,
+}
+
+impl SchemaType {
+    fn accepts(self, value: &serde_json::Value) -> bool {
+        match self {
+            Self::Object => value.is_object(),
+            Self::Array => value.is_array(),
+            Self::String => value.is_string(),
+            Self::Unsigned => value.is_u64(),
+            Self::Number => value.is_number(),
+            Self::Boolean => value.is_boolean(),
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Object => "an object",
+            Self::Array => "an array",
+            Self::String => "a string",
+            Self::Unsigned => "a non-negative integer",
+            Self::Number => "a number",
+            Self::Boolean => "a boolean",
+        }
+    }
+}
+
+fn schema_field(
+    value: &serde_json::Value,
+    pointer: &str,
+    kind: SchemaType,
+    required: bool,
+) -> Result<()> {
+    match value.pointer(pointer).filter(|value| !value.is_null()) {
+        Some(value) if kind.accepts(value) => Ok(()),
+        None if !required => Ok(()),
+        _ => bail!("report field '{pointer}' must be {}", kind.description()),
+    }
+}
+
+fn schema_collection(
+    value: &serde_json::Value,
+    pointer: &str,
+    fields: &[(&str, SchemaType, bool)],
+) -> Result<()> {
+    schema_field(value, pointer, SchemaType::Array, false)?;
+    if let Some(items) = value.pointer(pointer).and_then(serde_json::Value::as_array) {
+        for (index, item) in items.iter().enumerate() {
+            if !item.is_object() {
+                bail!("report item '{pointer}/{index}' must be an object");
+            }
+            for (name, kind, required) in fields {
+                schema_field(item, &format!("/{name}"), *kind, *required)
+                    .with_context(|| format!("invalid report item '{pointer}/{index}'"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_v1(value: &serde_json::Value) -> Result<()> {
+    use SchemaType::{Array, Boolean, Number, Object, String, Unsigned};
+    for field in [
+        "file",
+        "hashes",
+        "entropy",
+        "content_analysis",
+        "rule_analysis",
+        "summary",
+    ] {
+        schema_field(value, &format!("/{field}"), Object, true)?;
+    }
+    schema_field(value, "/findings", Array, true)?;
+    for pointer in [
+        "/file/path",
+        "/file/format",
+        "/hashes/md5",
+        "/hashes/sha1",
+        "/hashes/sha256",
+    ] {
+        schema_field(value, pointer, String, true)?;
+    }
+    schema_field(value, "/file/size", Unsigned, true)?;
+    schema_field(value, "/entropy/bits_per_byte", Number, true)?;
+
+    // The v1 reader permits these sections and attributes to be omitted. Do
+    // not invent values or turn unavailable collections into [].
+    for pointer in [
+        "/file/executable",
+        "/file/archive",
+        "/content_analysis/report",
+        "/content_analysis/report/iocs",
+        "/rule_analysis/report",
+    ] {
+        schema_field(value, pointer, Object, false)?;
+    }
+    for pointer in [
+        "/content_analysis/status",
+        "/content_analysis/mode",
+        "/rule_analysis/status",
+        "/rule_analysis/rule_file",
+        "/file/executable/format",
+        "/file/executable/architecture",
+        "/file/executable/kind",
+        "/file/executable/entry_point",
+    ] {
+        schema_field(value, pointer, String, false)?;
+    }
+    for pointer in [
+        "/file/executable/bits",
+        "/file/archive/total_entries",
+        "/file/archive/total_size",
+        "/summary/total_findings",
+        "/summary/file_findings",
+        "/summary/content_findings",
+        "/summary/iocs",
+        "/summary/matched_rules",
+    ] {
+        schema_field(value, pointer, Unsigned, false)?;
+    }
+    schema_collection(
+        value,
+        "/content_analysis/report/iocs/iocs",
+        &[
+            ("kind", String, true),
+            ("value", String, true),
+            ("occurrences", Unsigned, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/findings",
+        &[
+            ("source", String, true),
+            ("kind", String, true),
+            ("value", String, true),
+            ("detail", String, true),
+            ("severity", String, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/rule_analysis/report/matches",
+        &[
+            ("id", String, true),
+            ("description", String, false),
+            ("severity", String, false),
+            ("kind", String, false),
+            ("category", String, false),
+            ("confidence", String, false),
+            ("total_matches", Unsigned, false),
+            ("truncated", Boolean, false),
+            ("conditions", Object, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/file/archive/entries",
+        &[
+            ("name", String, true),
+            ("kind", String, false),
+            ("size", Unsigned, false),
+            ("compressed_size", Unsigned, false),
+            ("encrypted", Boolean, false),
+            ("path_safe", Boolean, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/file/executable/section_details",
+        &[
+            ("name", String, true),
+            ("virtual_address", String, false),
+            ("file_offset", Unsigned, false),
+            ("file_size", Unsigned, false),
+            ("memory_size", Unsigned, false),
+            ("readable", Boolean, false),
+            ("allocated", Boolean, false),
+            ("writable", Boolean, false),
+            ("executable", Boolean, false),
+        ],
+    )?;
+    if let Some(items) = value
+        .pointer("/rule_analysis/report/matches")
+        .and_then(serde_json::Value::as_array)
+    {
+        for (index, item) in items.iter().enumerate() {
+            for name in ["all_required", "all_matched", "any_required", "any_matched"] {
+                schema_field(item, &format!("/conditions/{name}"), Unsigned, false)
+                    .with_context(|| format!("invalid rule conditions at item {index}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ReportFormat {
     Text,

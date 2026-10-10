@@ -130,15 +130,10 @@ pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
             right.schema_version
         );
     }
-    if left.schema_version != crate::report::REPORT_SCHEMA_VERSION {
-        bail!(
-            "unsupported report schema version {}; expected {}",
-            left.schema_version,
-            crate::report::REPORT_SCHEMA_VERSION
-        );
-    }
-    validate_report_shape(&left.value).context("left input is not a valid Banshee report")?;
-    validate_report_shape(&right.value).context("right input is not a valid Banshee report")?;
+    crate::report::validate_compatibility(&left.value)
+        .context("left input is not a valid Banshee report")?;
+    crate::report::validate_compatibility(&right.value)
+        .context("right input is not a valid Banshee report")?;
 
     let mut fields = Vec::new();
     for (name, pointer) in [
@@ -432,11 +427,7 @@ fn load_report(path: &Path) -> Result<LoadedReport> {
         .with_context(|| format!("failed to read report '{}'", report_path.display()))?;
     let mut value: Value = serde_json::from_str(&source)
         .with_context(|| format!("invalid report JSON in '{}'", report_path.display()))?;
-    let schema = value
-        .get("schema_version")
-        .and_then(Value::as_u64)
-        .context("report is missing an integer schema_version")?;
-    let schema_version = u8::try_from(schema).context("report schema_version is out of range")?;
+    let schema_version = crate::report::schema_version(&value)?;
     sanitize_report_value(&mut value);
     Ok(LoadedReport {
         input: DiffInput {
@@ -446,48 +437,6 @@ fn load_report(path: &Path) -> Result<LoadedReport> {
         schema_version,
         value,
     })
-}
-
-fn validate_report_shape(value: &Value) -> Result<()> {
-    let object = value
-        .as_object()
-        .context("report root must be a JSON object")?;
-    for field in [
-        "file",
-        "hashes",
-        "entropy",
-        "content_analysis",
-        "rule_analysis",
-        "summary",
-    ] {
-        if !object.get(field).is_some_and(Value::is_object) {
-            bail!("report field '{field}' must be an object");
-        }
-    }
-    if !object.get("findings").is_some_and(Value::is_array) {
-        bail!("report field 'findings' must be an array");
-    }
-    for pointer in [
-        "/file/path",
-        "/file/format",
-        "/hashes/md5",
-        "/hashes/sha1",
-        "/hashes/sha256",
-    ] {
-        if !value.pointer(pointer).is_some_and(Value::is_string) {
-            bail!("report field '{pointer}' must be a string");
-        }
-    }
-    if !value.pointer("/file/size").is_some_and(Value::is_u64) {
-        bail!("report field '/file/size' must be a non-negative integer");
-    }
-    if !value
-        .pointer("/entropy/bits_per_byte")
-        .is_some_and(Value::is_number)
-    {
-        bail!("report field '/entropy/bits_per_byte' must be a number");
-    }
-    Ok(())
 }
 
 fn sanitize_report_value(value: &mut Value) {
