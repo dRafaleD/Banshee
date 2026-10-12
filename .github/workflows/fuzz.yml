@@ -2,10 +2,10 @@ name: Parser fuzz smoke
 
 on:
   pull_request:
-    paths: ['src/file_inspect.rs', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
+    paths: ['src/**', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
   push:
     branches: [master, 'codex/**']
-    paths: ['src/file_inspect.rs', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
+    paths: ['src/**', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
   schedule:
     - cron: '41 6 * * 3'
   workflow_dispatch:
@@ -19,8 +19,13 @@ concurrency:
 
 jobs:
   smoke:
+    name: smoke (${{ matrix.target }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [file_inspect, analyze, ioc_extract, rules_scan, cert_parse, jwt_inspect, report_compat, recipe, codec_roundtrip]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -34,12 +39,25 @@ jobs:
             . -> target
             fuzz -> target
       - run: cargo install cargo-fuzz --version 0.13.2 --locked
-      - run: cargo +stable run --locked --example fuzz_seeds -- fuzz/corpus/file_inspect
-      - run: cargo +nightly fuzz run file_inspect -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
+      - name: Prepare seed corpus
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$TARGET"
+          if [ "$TARGET" = file_inspect ]; then
+            rmdir "fuzz/corpus/$TARGET"
+            cargo +stable run --locked --example fuzz_seeds -- "fuzz/corpus/$TARGET"
+          elif [ -d "fuzz/seeds/$TARGET" ]; then
+            cp "fuzz/seeds/$TARGET"/* "fuzz/corpus/$TARGET/"
+          fi
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz run "$TARGET" -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: failure()
         with:
-          name: parser-fuzz-failure
+          name: parser-fuzz-failure-${{ matrix.target }}
           path: |
             fuzz/artifacts/
             fuzz/corpus/

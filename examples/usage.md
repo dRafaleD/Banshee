@@ -11,6 +11,10 @@ banshee whatis "aGVsbG8lMjB3b3JsZA=="
 echo "Njg2NTZjNmM2Zg==" | banshee whatis
 banshee whatis --file suspicious.txt
 banshee whatis --json "aGVsbG8="
+# UTF-16LE inside Base64, as used by PowerShell -EncodedCommand.
+banshee whatis "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAxAA=="
+# Heuristic single-byte XOR inside Base64; the layer reports the key.
+banshee whatis "xsrLy8DG0YXRyoXA3cTI1cnAi9HA1tGFwNPA19yFk5WF1sDGysvB1g=="
 banshee entropy "aGVsbG8gd29ybGQ="
 banshee encode base64 "hello"
 echo 'aGVsbG8=' | banshee decode base64
@@ -68,12 +72,17 @@ banshee file inspect application.elf --json
 banshee report suspicious.exe
 banshee report suspicious.zip --format json --output report.json
 banshee report suspicious.bin --rules examples/rules.toml --format markdown --output report.md
+# Offline HTML page: no scripts, no external resources, restrictive CSP.
+banshee report suspicious.bin --rules examples/rules.toml --format html --output report.html
 banshee evidence create suspicious.bin --rules examples/rules.toml --output case-evidence
 banshee evidence verify case-evidence
 # Explicit opt-in only when the original sample must be preserved in the bundle.
 banshee evidence create suspicious.bin --include-sample --output full-evidence
 banshee diff baseline-report.json current-report.json
 banshee diff baseline-evidence current-evidence --json
+banshee export report.json --format stix --output observables.stix.json
+banshee export case-evidence --format misp --output event.misp.json
+banshee export report.json --format csv
 banshee scan ./samples
 banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --max-file-size 32MiB --max-total-size 512MiB

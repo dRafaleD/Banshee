@@ -1,10 +1,28 @@
 # Parser fuzzing
 
-The `file_inspect` target feeds bounded arbitrary bytes into the same public parser
-used by Banshee. It accepts errors for invalid input, fails on panics/sanitizer
-reports, and asserts archive, decompression, executable section and symbol limits.
-Samples are never loaded or executed. Seed generation verifies eight synthetic
-PE/ELF/archive/compressed fixtures before writing them with exclusive creation.
+Each target feeds bounded arbitrary bytes into the same public API used by
+Banshee, accepts errors for invalid input, and fails on panics, sanitizer reports
+or broken invariants. Samples are never loaded or executed.
+
+| Target | API | Invariants |
+| --- | --- | --- |
+| `file_inspect` | `file_inspect::inspect_bytes` | archive, decompression, section and symbol limits |
+| `analyze` | `analysis::Analyzer` | decode depth limit |
+| `ioc_extract` | `ioc::extract` | match/location/context limits; secrets redacted by default |
+| `rules_scan` | `rules::validate_source`, `scan_source` | validated rules always scan; counts consistent |
+| `cert_parse` | `cert::inspect_bytes`, `inspect_chain_bytes` | chain length and link count |
+| `jwt_inspect` | `jwt::inspect` | object header/payload; never reports verification |
+| `report_compat` | `report::validate_compatibility` | only schema version 1 is accepted |
+| `recipe` | `recipe::run` | step limit; reported size matches output |
+| `codec_roundtrip` | `codec::encode_bytes`, `decode` | binary-safe codecs round-trip exactly |
+
+`rules_scan` splits its input at the first `0x00` byte (rule TOML, then content);
+`recipe` splits at the first newline (recipe expression, then input bytes).
+
+Seed generation for `file_inspect` verifies eight synthetic PE/ELF/archive/
+compressed fixtures before writing them with exclusive creation. Small harmless
+seeds for the other targets live in `fuzz/seeds/<target>/`; copy them into the
+corpus directory before the first run.
 
 ## Run on Linux (or Ubuntu in WSL)
 
@@ -16,6 +34,10 @@ rustup toolchain install nightly --profile minimal
 cargo install cargo-fuzz --version 0.13.2 --locked
 cargo run --locked --example fuzz_seeds -- fuzz/corpus/file_inspect
 cargo +nightly fuzz run file_inspect -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
+
+# Any other target, for example:
+mkdir -p fuzz/corpus/analyze && cp fuzz/seeds/analyze/* fuzz/corpus/analyze/
+cargo +nightly fuzz run analyze -- -max_total_time=60 -timeout=10 -rss_limit_mb=1024
 ```
 
 The default cargo-fuzz sanitizer is AddressSanitizer. Do not catch panics or suppress

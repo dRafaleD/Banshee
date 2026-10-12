@@ -16,6 +16,7 @@ const MAX_TOTAL_MATCHERS: usize = 4_096;
 const MAX_REFERENCES_PER_RULE: usize = 16;
 const MAX_REFERENCE_BYTES: usize = 512;
 const MAX_TAGS_PER_RULE: usize = 32;
+const MAX_ATTACK_IDS_PER_RULE: usize = 16;
 const MAX_METADATA_BYTES: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -142,6 +143,8 @@ struct RuleDefinition {
     #[serde(default)]
     references: Vec<String>,
     #[serde(default)]
+    attack: Vec<String>,
+    #[serde(default)]
     file_types: Vec<RuleFileType>,
     #[serde(default)]
     min_entropy: Option<f64>,
@@ -181,6 +184,8 @@ pub struct ValidatedRule {
     pub category: Option<String>,
     pub confidence: Option<Confidence>,
     pub references: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attack: Vec<String>,
     pub file_types: Vec<RuleFileType>,
     pub min_entropy: Option<f64>,
     pub max_entropy: Option<f64>,
@@ -208,6 +213,9 @@ pub struct RuleMatchReport {
     pub category: Option<String>,
     pub confidence: Option<Confidence>,
     pub references: Vec<String>,
+    /// MITRE ATT&CK tactic/technique identifiers declared by the rule author.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attack: Vec<String>,
     pub detected_file_type: RuleFileType,
     pub entropy: f64,
     pub conditions: ConditionReport,
@@ -249,8 +257,16 @@ struct CompiledRuleSet {
 }
 
 pub fn validate_file(path: &Path) -> Result<ValidationReport> {
-    let rules = load_and_compile(path)?;
-    Ok(ValidationReport {
+    Ok(validation_report(load_and_compile(path)?))
+}
+
+/// Validates TOML rule source already held in memory.
+pub fn validate_source(source: &str) -> Result<ValidationReport> {
+    Ok(validation_report(compile_in_memory(source)?))
+}
+
+fn validation_report(rules: CompiledRuleSet) -> ValidationReport {
+    ValidationReport {
         valid: true,
         version: rules.version,
         rule_count: rules.rules.len(),
@@ -266,6 +282,7 @@ pub fn validate_file(path: &Path) -> Result<ValidationReport> {
                 category: rule.definition.category,
                 confidence: rule.definition.confidence,
                 references: rule.definition.references,
+                attack: rule.definition.attack,
                 file_types: rule.definition.file_types,
                 min_entropy: rule.definition.min_entropy,
                 max_entropy: rule.definition.max_entropy,
@@ -275,14 +292,35 @@ pub fn validate_file(path: &Path) -> Result<ValidationReport> {
                 any_conditions: rule.any.len(),
             })
             .collect(),
-    })
+    }
 }
 
 pub fn scan(path: &Path, input: &[u8]) -> Result<ScanReport> {
+    ensure_scan_size(input)?;
+    scan_compiled(load_and_compile(path)?, input)
+}
+
+/// Scans `input` with TOML rule source already held in memory.
+pub fn scan_source(source: &str, input: &[u8]) -> Result<ScanReport> {
+    ensure_scan_size(input)?;
+    scan_compiled(compile_in_memory(source)?, input)
+}
+
+fn ensure_scan_size(input: &[u8]) -> Result<()> {
     if input.len() > MAX_SCAN_BYTES {
         bail!("rule scan input exceeds the 64 MiB safety limit");
     }
-    let rules = load_and_compile(path)?;
+    Ok(())
+}
+
+fn compile_in_memory(source: &str) -> Result<CompiledRuleSet> {
+    if source.len() as u64 > MAX_RULE_FILE_BYTES {
+        bail!("rule file exceeds the 1 MiB safety limit");
+    }
+    compile_source(source)
+}
+
+fn scan_compiled(rules: CompiledRuleSet, input: &[u8]) -> Result<ScanReport> {
     let rules_loaded = rules.rules.len();
     let file_type = detect_file_type(input);
     let entropy = crate::analysis::entropy::analyze_bytes(input).bits_per_byte;
@@ -301,16 +339,8 @@ pub fn scan(path: &Path, input: &[u8]) -> Result<ScanReport> {
 }
 
 fn load_and_compile(path: &Path) -> Result<CompiledRuleSet> {
-    let metadata = std::fs::metadata(path)
-        .with_context(|| format!("failed to inspect rule file '{}'", path.display()))?;
-    if !metadata.is_file() {
-        bail!("'{}' is not a regular rule file", path.display());
-    }
-    if metadata.len() > MAX_RULE_FILE_BYTES {
-        bail!("rule file exceeds the 1 MiB safety limit");
-    }
-    let source = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read UTF-8 rule file '{}'", path.display()))?;
+    let source =
+        crate::input::read_regular_text_file_limited(path, MAX_RULE_FILE_BYTES, "rule file")?;
     compile_source(&source).with_context(|| format!("invalid rule file '{}'", path.display()))
 }
 
@@ -451,6 +481,26 @@ fn validate_definition(rule: &RuleDefinition, ids: &mut HashSet<String>) -> Resu
     for reference in &rule.references {
         validate_metadata_value(rule, "reference", reference, MAX_REFERENCE_BYTES)?;
     }
+    if rule.attack.len() > MAX_ATTACK_IDS_PER_RULE {
+        bail!(
+            "rule '{}' exceeds the {MAX_ATTACK_IDS_PER_RULE}-ATT&CK-identifier safety limit",
+            rule.id
+        );
+    }
+    let mut attack_ids = HashSet::new();
+    for identifier in &rule.attack {
+        if !is_attack_identifier(identifier) {
+            bail!(
+                "rule '{}' attack value '{}' must be a tactic (TA0002) or technique \
+                 (T1059, T1059.001) identifier",
+                rule.id,
+                identifier.escape_debug()
+            );
+        }
+        if !attack_ids.insert(identifier.as_str()) {
+            bail!("rule '{}' repeats attack value '{identifier}'", rule.id);
+        }
+    }
     if rule.file_types.len() > 9 {
         bail!("rule '{}' has too many file_types", rule.id);
     }
@@ -479,6 +529,23 @@ fn validate_definition(rule: &RuleDefinition, ids: &mut HashSet<String>) -> Resu
         }
     }
     Ok(())
+}
+
+/// Accepts `TA0000` tactics, `T0000` techniques and `T0000.000` sub-techniques.
+fn is_attack_identifier(value: &str) -> bool {
+    let digits = |part: &str, length: usize| {
+        part.len() == length && part.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    if let Some(tactic) = value.strip_prefix("TA") {
+        return digits(tactic, 4);
+    }
+    let Some(technique) = value.strip_prefix('T') else {
+        return false;
+    };
+    match technique.split_once('.') {
+        Some((base, sub)) => digits(base, 4) && digits(sub, 3),
+        None => digits(technique, 4),
+    }
 }
 
 fn validate_metadata_value(
@@ -633,6 +700,7 @@ fn scan_rule(
         category: rule.definition.category,
         confidence: rule.definition.confidence,
         references: rule.definition.references,
+        attack: rule.definition.attack,
         detected_file_type: file_type,
         entropy,
         conditions: ConditionReport {
@@ -852,6 +920,7 @@ tags = ["executable"]
 category = "execution"
 confidence = "medium"
 references = ["internal-playbook-7"]
+attack = ["TA0002", "T1059.001"]
 file_types = ["pe"]
 min_entropy = 0.0
 max_entropy = 8.0
@@ -880,6 +949,7 @@ case_insensitive = true
         .expect("matched rule");
         assert_eq!(report.category.as_deref(), Some("execution"));
         assert_eq!(report.references, ["internal-playbook-7"]);
+        assert_eq!(report.attack, ["TA0002", "T1059.001"]);
         assert_eq!(report.detected_file_type, RuleFileType::Pe);
         assert_eq!(report.total_matches, 2);
         assert!(report.truncated);
@@ -969,5 +1039,44 @@ min_entropy = 8.1
                 .to_string()
                 .contains("all/any groups are limited to 16")
         );
+    }
+
+    #[test]
+    fn validates_attack_identifiers_strictly() {
+        for valid in ["TA0002", "T1059", "T1059.001"] {
+            assert!(super::is_attack_identifier(valid), "{valid}");
+        }
+        for invalid in [
+            "t1059",
+            "T105",
+            "T1059.1",
+            "T1059.0011",
+            "TA002",
+            "T1059.",
+            "X1059",
+            "",
+        ] {
+            assert!(!super::is_attack_identifier(invalid), "{invalid}");
+        }
+        let rule = |attack: &str| {
+            format!(
+                "version = 1\n[[rules]]\nid = 'r'\nkind = 'literal'\npattern = 'x'\nattack = {attack}\n"
+            )
+        };
+        assert!(compile_source(&rule(r#"["T1059.001"]"#)).is_ok());
+        let error = format!(
+            "{:#}",
+            compile_source(&rule(r#"["T1059.1"]"#))
+                .err()
+                .expect("invalid id")
+        );
+        assert!(error.contains("must be a tactic"), "{error}");
+        let error = format!(
+            "{:#}",
+            compile_source(&rule(r#"["T1059", "T1059"]"#))
+                .err()
+                .expect("duplicate id")
+        );
+        assert!(error.contains("repeats attack value"), "{error}");
     }
 }

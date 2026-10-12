@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "file": {
+    "path": "synthetic/sample.exe", "size": 512, "format": "PE executable",
+    "archive": null,
+    "executable": {"format": "PE", "architecture": "x86_64", "bits": 64, "kind": "executable", "entry_point": "0x1000", "sections": 1}
+  },
+  "hashes": {"md5": "11111111111111111111111111111111", "sha1": "1111111111111111111111111111111111111111", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"},
+  "entropy": {"bits_per_byte": 1.5},
+  "content_analysis": {"status": "completed", "mode": "extracted_printable_strings", "report": {"iocs": {"iocs": []}}},
+  "rule_analysis": {"status": "not_requested"},
+  "findings": [],
+  "summary": {"total_findings": 0, "file_findings": 0, "content_findings": 0, "iocs": 0, "matched_rules": 0}
+}

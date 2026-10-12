@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "file": {
+    "path": "synthetic/sample.zip", "size": 128, "format": "ZIP archive",
+    "executable": null,
+    "archive": {"total_entries": 1, "total_size": 4, "truncated": false, "entries": [{"name": "sample.txt", "kind": "file", "size": 4, "compressed_size": 4, "encrypted": false, "path_safe": true}]}
+  },
+  "hashes": {"md5": "22222222222222222222222222222222", "sha1": "2222222222222222222222222222222222222222", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
+  "entropy": {"bits_per_byte": 2.5},
+  "content_analysis": {"status": "completed", "mode": "extracted_printable_strings", "report": {"iocs": {"iocs": [{"kind": "domain", "value": "fixture.example", "occurrences": 1}]}}},
+  "rule_analysis": {"status": "completed", "rule_file": "synthetic/rules.toml", "report": {"rules_loaded": 1, "matched_rules": 1, "matches": [{"id": "synthetic-marker", "description": "Synthetic marker", "severity": "info", "kind": "literal", "total_matches": 1, "truncated": false}]}},
+  "findings": [{"source": "ioc_extraction", "severity": "info", "kind": "domain", "value": "fixture.example", "detail": "1 occurrence; source position unavailable"}],
+  "summary": {"total_findings": 1, "file_findings": 0, "content_findings": 0, "iocs": 1, "matched_rules": 1}
+}

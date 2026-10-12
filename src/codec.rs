@@ -331,29 +331,34 @@ pub(crate) fn decode_unicode(input: &str) -> Result<String> {
             let end = value.find('}')?;
             Some((&value[..end], end + 4))
         }) {
-            let code = u32::from_str_radix(hex.0, 16).context("invalid Unicode escape")?;
+            let code = parse_hex(hex.0, 1..=6).context("invalid Unicode escape")?;
             output.push(char::from_u32(code).context("invalid Unicode code point")?);
             index += hex.1;
             continue;
         }
         if remaining.starts_with("\\u") && remaining.len() >= 6 {
-            let high =
-                u16::from_str_radix(&remaining[2..6], 16).context("invalid \\u Unicode escape")?;
+            // Slice with `get` so a multi-byte character after `\u` is rejected
+            // instead of splitting a UTF-8 sequence.
+            let high = remaining
+                .get(2..6)
+                .and_then(|digits| parse_hex(digits, 4..=4))
+                .context("invalid \\u Unicode escape")?;
             if (0xD800..=0xDBFF).contains(&high) {
-                if remaining.len() < 12 || &remaining[6..8] != "\\u" {
+                if remaining.get(6..8) != Some("\\u") {
                     bail!("high surrogate is missing its low surrogate");
                 }
-                let low =
-                    u16::from_str_radix(&remaining[8..12], 16).context("invalid low surrogate")?;
+                let low = remaining
+                    .get(8..12)
+                    .and_then(|digits| parse_hex(digits, 4..=4))
+                    .context("invalid low surrogate")?;
                 if !(0xDC00..=0xDFFF).contains(&low) {
                     bail!("invalid low surrogate");
                 }
-                let code =
-                    0x1_0000 + ((u32::from(high) - 0xD800) << 10) + (u32::from(low) - 0xDC00);
+                let code = 0x1_0000 + ((high - 0xD800) << 10) + (low - 0xDC00);
                 output.push(char::from_u32(code).context("invalid surrogate pair")?);
                 index += 12;
             } else {
-                output.push(char::from_u32(u32::from(high)).context("invalid Unicode code point")?);
+                output.push(char::from_u32(high).context("invalid Unicode code point")?);
                 index += 6;
             }
             continue;
@@ -364,6 +369,14 @@ pub(crate) fn decode_unicode(input: &str) -> Result<String> {
         index += character.len_utf8();
     }
     Ok(output)
+}
+
+/// Parses only ASCII hex digits; `from_str_radix` alone would accept a sign.
+fn parse_hex(digits: &str, length: std::ops::RangeInclusive<usize>) -> Option<u32> {
+    if !length.contains(&digits.len()) || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(digits, 16).ok()
 }
 
 #[cfg(test)]

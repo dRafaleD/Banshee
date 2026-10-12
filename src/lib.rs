@@ -6,6 +6,7 @@ pub mod cli;
 pub mod codec;
 pub mod diff;
 pub mod evidence;
+pub mod export;
 pub mod file_inspect;
 pub mod hash;
 pub mod input;
@@ -15,6 +16,7 @@ pub mod output;
 pub mod recipe;
 pub mod regex_tool;
 pub mod report;
+mod report_html;
 pub mod rules;
 pub mod scan;
 pub mod timestamp;
@@ -28,6 +30,8 @@ use crate::cli::{
     CertCommand, Cli, Command, EvidenceCommand, FileCommand, HashCommand, JwtCommand, RegexCommand,
     RulesCommand, TimestampCommand,
 };
+
+const MAX_JWT_KEY_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunOutcome {
@@ -93,10 +97,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             JwtCommand::Verify(args) => {
                 let token = input::read(&args.source.input, args.source.file.as_deref())?;
                 let key = match &args.key {
-                    Some(path) => Some(
-                        std::fs::read(path)
-                            .with_context(|| format!("failed to read key '{}'", path.display()))?,
-                    ),
+                    Some(path) => Some(input::read_regular_file_limited(
+                        path,
+                        MAX_JWT_KEY_BYTES,
+                        "JWT key",
+                    )?),
                     None => None,
                 };
                 let report = jwt::verify(
@@ -562,6 +567,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 rule.references.len()
                             )?;
                         }
+                        if !rule.attack.is_empty() {
+                            writeln!(output, "    attack={}", rule.attack.join(","))?;
+                        }
                         if !rule.file_types.is_empty()
                             || rule.min_entropy.is_some()
                             || rule.max_entropy.is_some()
@@ -800,6 +808,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             let report = diff::compare(&args.left, &args.right)?;
             explicit_findings_status |= report.summary.has_changes;
             diff::print(&report, args.json)?;
+        }
+        Command::Export(args) => {
+            output::with_output(|output| export::export(&args.input, args.format, output))?;
         }
         Command::Encode(args) => {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;

@@ -180,9 +180,14 @@ pub fn print_report(report: &AnalysisReport, json: bool) -> Result<()> {
     } else {
         writeln!(output, "{}", paint("Layers:", Tone::Heading))?;
         for layer in &report.layers {
+            let detail = layer
+                .detail
+                .as_deref()
+                .map(|detail| format!(", {}", terminal_safe(detail)))
+                .unwrap_or_default();
             writeln!(
                 output,
-                "  [{}] {} ({:.0}% confidence)",
+                "  [{}] {} ({:.0}% confidence{detail})",
                 layer.depth,
                 paint(&layer.kind.to_string(), Tone::Info),
                 layer.confidence * 100.0

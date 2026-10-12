@@ -10,6 +10,8 @@ pub enum EncodingKind {
     UnicodeEscape,
     Gzip,
     Zlib,
+    Utf16Le,
+    Xor,
 }
 
 impl std::fmt::Display for EncodingKind {
@@ -22,6 +24,8 @@ impl std::fmt::Display for EncodingKind {
             Self::UnicodeEscape => "Unicode escape",
             Self::Gzip => "Gzip",
             Self::Zlib => "Zlib",
+            Self::Utf16Le => "UTF-16LE",
+            Self::Xor => "XOR",
         };
         formatter.write_str(name)
     }
@@ -34,6 +38,8 @@ pub struct Layer {
     pub confidence: f32,
     pub input: String,
     pub output: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]

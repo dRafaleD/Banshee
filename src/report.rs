@@ -247,6 +247,8 @@ pub enum ReportFormat {
     Text,
     Json,
     Markdown,
+    /// Self-contained, script-free HTML page.
+    Html,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -352,7 +354,7 @@ pub fn generate(
         bail!("file exceeds the 256 MiB report limit");
     }
     let bytes =
-        std::fs::read(path).with_context(|| format!("failed to read '{}'", path.display()))?;
+        crate::input::read_regular_file_limited(path, MAX_REPORT_FILE_BYTES, "report input")?;
 
     let file = crate::file_inspect::inspect_bytes(&bytes, path.display().to_string(), max_entries)?;
     let hashes = FileHashes {
@@ -486,10 +488,17 @@ fn rule_finding(rule: &RuleMatchReport) -> ReportFinding {
         severity: rule.severity,
         kind: rule.kind.to_string(),
         value: rule.id.clone(),
-        detail: if rule.description.is_empty() {
-            format!("{} matches", rule.total_matches)
-        } else {
-            rule.description.clone()
+        detail: {
+            let detail = if rule.description.is_empty() {
+                format!("{} matches", rule.total_matches)
+            } else {
+                rule.description.clone()
+            };
+            if rule.attack.is_empty() {
+                detail
+            } else {
+                format!("{detail} [ATT&CK {}]", rule.attack.join(", "))
+            }
         },
     }
 }
@@ -511,6 +520,7 @@ pub fn write_to(
             writeln!(output).context("failed to write unified report")
         }
         ReportFormat::Markdown => write_markdown(output, report),
+        ReportFormat::Html => crate::report_html::write_html(output, report),
     }
 }
 

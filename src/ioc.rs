@@ -3,7 +3,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::ValueEnum;
 use regex::Regex;
 use serde::Serialize;
@@ -12,6 +12,7 @@ use url::Url;
 const DEFAULT_MAX_LOCATIONS: usize = 20;
 const DEFAULT_MAX_MATCHES: usize = 10_000;
 const DEFAULT_MAX_CONTEXT_CHARS: usize = 240;
+const MAX_PATTERN_LIST_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct ExtractOptions {
@@ -66,8 +67,11 @@ impl PatternList {
         let mut patterns = Vec::new();
         for path in paths {
             let path = path.as_ref();
-            let contents = std::fs::read_to_string(path)
-                .with_context(|| format!("failed to read IOC list '{}'", path.display()))?;
+            let contents = crate::input::read_regular_text_file_limited(
+                path,
+                MAX_PATTERN_LIST_BYTES,
+                "IOC list",
+            )?;
             for line in contents.lines() {
                 let value = line.trim();
                 if !value.is_empty() && !value.starts_with('#') {
@@ -626,14 +630,27 @@ fn extract_domains(input: &str, iocs: &mut IocCollector) {
         if iocs.is_full() {
             break;
         }
-        iocs.record(
-            matched.start(),
-            IocKind::Domain,
-            matched.as_str().to_ascii_lowercase(),
-            None,
-        );
+        let domain = matched.as_str().to_ascii_lowercase();
+        if domain
+            .rsplit('.')
+            .next()
+            .is_some_and(|label| NON_TLD_FILE_EXTENSIONS.contains(&label))
+        {
+            continue;
+        }
+        iocs.record(matched.start(), IocKind::Domain, domain, None);
     }
 }
+
+/// File extensions that are not delegated top-level domains, so `gate.php` or
+/// `payload.exe` are file names rather than hosts. Extensions that are also
+/// real TLDs (for example `.py`, `.sh`, `.zip`) are intentionally absent.
+const NON_TLD_FILE_EXTENSIONS: &[&str] = &[
+    "asp", "aspx", "bak", "bat", "bin", "cfg", "cgi", "cmd", "conf", "css", "csv", "dat", "dll",
+    "doc", "docm", "docx", "exe", "gif", "gz", "hta", "htm", "html", "ini", "jar", "jpeg", "jpg",
+    "js", "json", "jsp", "lnk", "log", "msi", "php", "png", "ps1", "rar", "scr", "sys", "tmp",
+    "txt", "vbs", "xls", "xlsm", "xlsx", "xml", "yaml", "yml",
+];
 
 struct SecretPatterns {
     cloud_access_key: Regex,
@@ -909,6 +926,21 @@ mod tests {
     use super::{ExtractOptions, IocKind, IocSort, PatternList, defang, extract, mask_secret};
 
     const DIRTY_LOG: &str = "request hxxps[://]EVIL[.]Example[.]COM/a, source=8[.]8[.]8[.]8 ipv6=2001:4860:4860::8888 hash=D41D8CD98F00B204E9800998ECF8427E alt=cdn(.)example(.)net mail=SOC[@]Example[.]COM mac=AA-BB-CC-DD-EE-FF";
+
+    #[test]
+    fn file_names_with_non_tld_extensions_are_not_domains() {
+        let report = extract(
+            "GET /gate.php and payload.exe, but tool.py and example.test are hosts",
+            ExtractOptions::default(),
+        );
+        let domains = report
+            .iocs
+            .iter()
+            .filter(|ioc| ioc.kind == IocKind::Domain)
+            .map(|ioc| ioc.value.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(domains, ["example.test", "tool.py"]);
+    }
 
     #[test]
     fn extracts_and_normalizes_defanged_iocs() {

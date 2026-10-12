@@ -128,3 +128,191 @@ fn diff_must_mask_secret_values_from_saved_reports() {
         "Diff re-emits secret from input report"
     );
 }
+
+#[test]
+fn local_inputs_must_respect_size_limits_before_parsing() {
+    let f = Fixture::new("input-limits");
+    let certificate = f.0.join("large.pem");
+    let mut oversized = b"-----BEGIN CERTIFICATE-----\n".to_vec();
+    oversized.resize(4 * 1024 * 1024 + 1, b'A');
+    std::fs::write(&certificate, &oversized).unwrap();
+    let error = banshee::cert::inspect_file(&certificate)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("4 MiB safety limit"), "{error}");
+    assert!(banshee::cert::inspect_bytes(&oversized).is_err());
+
+    let list = f.0.join("allow.txt");
+    std::fs::write(&list, vec![b'a'; 4 * 1024 * 1024 + 1]).unwrap();
+    assert!(banshee::ioc::PatternList::from_files(&[&list]).is_err());
+
+    let rules = "x".repeat(1024 * 1024 + 1);
+    assert!(banshee::rules::validate_source(&rules).is_err());
+}
+
+#[test]
+fn in_memory_rule_source_matches_file_rule_behavior() {
+    let f = Fixture::new("rule-source");
+    let source = "version=1\n[[rules]]\nid='marker'\nkind='literal'\npattern='MARKER'\n";
+    let path = f.0.join("rules.toml");
+    std::fs::write(&path, source).unwrap();
+    let input = b"prefix MARKER suffix MARKER";
+
+    let from_file = banshee::rules::scan(&path, input).unwrap();
+    let from_source = banshee::rules::scan_source(source, input).unwrap();
+    assert_eq!(
+        serde_json::to_value(&from_file).unwrap(),
+        serde_json::to_value(&from_source).unwrap()
+    );
+    assert_eq!(
+        banshee::rules::validate_source(source).unwrap().rule_count,
+        1
+    );
+}
+
+#[test]
+fn html_report_must_escape_sample_content_and_forbid_active_content() {
+    let f = Fixture::new("html-report");
+    let sample = f.0.join("sample.log");
+    // Synthetic markup and credential only; nothing here is executed.
+    std::fs::write(
+        &sample,
+        "GET http://evil.example.test/<script>alert(1)</script>\n\
+         id=\"><img src=x onerror=alert(2)> from 192.0.2.7\n\
+         name \u{202e}gpj.exe\n\
+         aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
+    )
+    .unwrap();
+    let rules = f.0.join("rules.toml");
+    std::fs::write(
+        &rules,
+        "version=1\n[[rules]]\nid='marker'\ndescription='<b onclick=x>desc</b>'\n\
+         kind='literal'\npattern='alert'\nreferences=['javascript:alert(3)']\n",
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("banshee")
+        .unwrap()
+        .arg("report")
+        .arg(&sample)
+        .arg("--rules")
+        .arg(&rules)
+        .args(["--format", "html"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let html = String::from_utf8(output.stdout).unwrap();
+
+    assert!(html.starts_with("<!doctype html>"));
+    assert!(html.contains("Content-Security-Policy\" content=\"default-src 'none'"));
+    for forbidden in [
+        "<script",
+        "<img",
+        "<b onclick",
+        "<a ",
+        "href=",
+        "\u{202e}",
+        "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    ] {
+        assert!(
+            !html.contains(forbidden),
+            "HTML report contains {forbidden:?}"
+        );
+    }
+    assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    assert!(
+        html.contains("javascript:alert(3)"),
+        "references stay inert text"
+    );
+}
+
+#[test]
+fn exports_must_contain_observables_only_and_never_redacted_secrets() {
+    let f = Fixture::new("export");
+    let sample = f.0.join("sample.log");
+    let secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    std::fs::write(
+        &sample,
+        format!(
+            "beacon http://c2.example.test/a from 192.0.2.9\n\
+             aws_secret_access_key = {secret}\n\
+             md5 44d88612fea8a8f36de82e1f4d6c1b0f\n"
+        ),
+    )
+    .unwrap();
+    let report = f.0.join("report.json");
+    Command::cargo_bin("banshee")
+        .unwrap()
+        .arg("--output")
+        .arg(&report)
+        .arg("report")
+        .arg(&sample)
+        .args(["--format", "json"])
+        .assert()
+        .success();
+    let bundle = f.0.join("bundle");
+    Command::cargo_bin("banshee")
+        .unwrap()
+        .args(["evidence", "create"])
+        .arg(&sample)
+        .arg("--output")
+        .arg(&bundle)
+        .assert()
+        .success();
+
+    let run = |input: &std::path::Path, format: &str| {
+        let output = Command::cargo_bin("banshee")
+            .unwrap()
+            .arg("export")
+            .arg(input)
+            .args(["--format", format])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{format}: {output:?}");
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(!text.contains(secret), "{format} export leaked a secret");
+        assert!(
+            !text.contains("REDACTED"),
+            "{format} exported a masked value"
+        );
+        text
+    };
+
+    let stix: serde_json::Value = serde_json::from_str(&run(&report, "stix")).unwrap();
+    assert_eq!(stix["type"], "bundle");
+    let objects = stix["objects"].as_array().unwrap();
+    assert!(objects.iter().all(|object| object["type"] != "indicator"));
+    let grouping = objects
+        .iter()
+        .find(|object| object["type"] == "grouping")
+        .unwrap();
+    assert_eq!(
+        grouping["object_refs"].as_array().unwrap().len(),
+        objects.len() - 1
+    );
+    assert!(
+        objects
+            .iter()
+            .any(|object| object["type"] == "url" && object["value"] == "http://c2.example.test/a")
+    );
+    // Deterministic SCO identifiers do not depend on export time.
+    let again: serde_json::Value = serde_json::from_str(&run(&bundle, "stix")).unwrap();
+    assert_eq!(stix["id"], again["id"]);
+
+    let misp: serde_json::Value = serde_json::from_str(&run(&report, "misp")).unwrap();
+    let attributes = misp["Event"]["Attribute"].as_array().unwrap();
+    assert!(
+        attributes
+            .iter()
+            .all(|attribute| attribute["to_ids"] == false)
+    );
+    assert!(
+        attributes
+            .iter()
+            .any(|attribute| attribute["type"] == "ip-dst" && attribute["value"] == "192.0.2.9")
+    );
+
+    let csv = run(&report, "csv");
+    assert!(csv.starts_with("type,value,occurrences,source\n"));
+    assert!(csv.contains("\nmd5,44d88612fea8a8f36de82e1f4d6c1b0f,1,sample.log\n"));
+}

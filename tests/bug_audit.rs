@@ -160,3 +160,23 @@ fn diff_duplicate_archive_entries_ignore_order() {
         .assert()
         .success();
 }
+
+#[test]
+fn unicode_escape_with_multibyte_digits_fails_without_panicking() {
+    // Minimized from the codec_roundtrip fuzz target: `\u` followed by a
+    // multi-byte character used to split a UTF-8 sequence and panic.
+    for input in ["\\u{hh\u{060f}+", "\\uAB\u{e9}C", "\\uD83D\\u\u{e9}AB"] {
+        Command::cargo_bin("banshee")
+            .unwrap()
+            .args(["decode", "unicode", input])
+            .assert()
+            .code(2);
+        // Analysis follows the same decoder and must stay a normal result.
+        Command::cargo_bin("banshee")
+            .unwrap()
+            .args(["whatis", &format!("\\u0041 {input}")])
+            .assert()
+            .success();
+    }
+    assert!(banshee::codec::decode("\\u+041", banshee::codec::Codec::Unicode).is_err());
+}

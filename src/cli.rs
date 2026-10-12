@@ -75,6 +75,8 @@ pub enum Command {
     Evidence(EvidenceArgs),
     /// Compare two report JSON files or verified evidence bundles
     Diff(DiffArgs),
+    /// Export saved report observables as STIX 2.1, MISP or CSV
+    Export(ExportArgs),
     /// Encode text using a selected format
     Encode(EncodeArgs),
     /// Decode data using a selected format
@@ -638,6 +640,16 @@ pub struct EvidenceVerifyArgs {
     /// Emit machine-readable JSON
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ExportArgs {
+    /// Report JSON file or evidence bundle directory
+    pub input: PathBuf,
+
+    /// Export format; observables only, never verdicts or redacted secrets
+    #[arg(long, value_enum)]
+    pub format: crate::export::ExportFormat,
 }
 
 #[derive(Debug, Args)]

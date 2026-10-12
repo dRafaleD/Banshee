@@ -114,10 +114,10 @@ pub struct DiffInput {
     pub kind: InputKind,
 }
 
-struct LoadedReport {
-    input: DiffInput,
-    schema_version: u8,
-    value: Value,
+pub(crate) struct LoadedReport {
+    pub(crate) input: DiffInput,
+    pub(crate) schema_version: u8,
+    pub(crate) value: Value,
 }
 
 pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
@@ -395,10 +395,19 @@ const fn availability(value: Availability) -> &'static str {
 }
 
 fn load_report(path: &Path) -> Result<LoadedReport> {
+    load_saved_report(path, "diff")
+}
+
+/// Loads a saved report JSON file or a manifest-verified evidence bundle,
+/// with credential values masked. `purpose` labels error messages.
+pub(crate) fn load_saved_report(path: &Path, purpose: &str) -> Result<LoadedReport> {
     let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("failed to inspect diff input '{}'", path.display()))?;
+        .with_context(|| format!("failed to inspect {purpose} input '{}'", path.display()))?;
     if metadata.file_type().is_symlink() {
-        bail!("diff input '{}' cannot be a symbolic link", path.display());
+        bail!(
+            "{purpose} input '{}' cannot be a symbolic link",
+            path.display()
+        );
     }
     let (report_path, kind) = if metadata.is_dir() {
         let verification = crate::evidence::verify(path)?;
@@ -414,17 +423,20 @@ fn load_report(path: &Path) -> Result<LoadedReport> {
         (path.to_owned(), InputKind::ReportJson)
     } else {
         bail!(
-            "diff input '{}' is not a regular report or bundle",
+            "{purpose} input '{}' is not a regular report or bundle",
             path.display()
         );
     };
     let report_metadata = fs::metadata(&report_path)
         .with_context(|| format!("failed to inspect report '{}'", report_path.display()))?;
     if report_metadata.len() > MAX_REPORT_BYTES {
-        bail!("diff report exceeds the 64 MiB safety limit");
+        bail!("{purpose} report exceeds the 64 MiB safety limit");
     }
-    let source = fs::read_to_string(&report_path)
-        .with_context(|| format!("failed to read report '{}'", report_path.display()))?;
+    let source = crate::input::read_regular_text_file_limited(
+        &report_path,
+        MAX_REPORT_BYTES,
+        &format!("{purpose} report"),
+    )?;
     let mut value: Value = serde_json::from_str(&source)
         .with_context(|| format!("invalid report JSON in '{}'", report_path.display()))?;
     let schema_version = crate::report::schema_version(&value)?;

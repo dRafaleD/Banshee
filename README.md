@@ -36,8 +36,9 @@ Development guides: [installation](docs/INSTALLATION.md),
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
 | Inspect local artifacts | `file inspect`, `jwt`, `cert`, `hash` | Structural metadata and explicit verification where supported |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
-| Prepare an investigation report | `report` | Text, JSON or Markdown |
+| Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
+| Share observables with other tools | `export` | STIX 2.1, MISP event JSON or CSV |
 
 Output formats vary by command. Use `banshee <command> --help` for supported
 formats and limits. Findings are triage signals; review them before acting.
@@ -84,6 +85,9 @@ target/release/banshee evidence verify case-evidence
 
 # Compare two saved reports or verified evidence directories.
 target/release/banshee diff baseline-report.json current-report.json
+
+# Share observables from a saved report or verified bundle (never verdicts or secrets).
+target/release/banshee export case-evidence --format stix --output observables.stix.json
 ```
 
 ### What it can help with
@@ -94,7 +98,8 @@ target/release/banshee diff baseline-report.json current-report.json
 - Detect common credential and private-key markers with safe default redaction.
 - Analyze entropy, common encodings, JWTs, hashes, timestamps, certificates, archives, ELF, and PE files.
 - Run local TOML rules, inspect regex patterns, and watch fresh log lines.
-- Build unified text, JSON, or Markdown reports for individual local files.
+- Build unified text, JSON, Markdown, or script-free HTML reports for individual
+  local files.
 - Create manifest-backed evidence directories and verify their file hashes
   completely offline.
 - Compare compatible reports or evidence bundles without reopening or
@@ -110,6 +115,9 @@ The initial foundation includes the following commands:
 - Detects Base64, hexadecimal, URL encoding, and HTML entities.
 - Recursively decodes nested layers with depth and size limits.
 - Detects Base64/Hex-wrapped gzip and zlib layers with a 16 MiB decompression limit.
+- Unwraps UTF-16LE text (for example PowerShell `-EncodedCommand`) and
+  heuristic single-byte XOR layers inside Base64/Hex payloads; XOR keys are
+  reported and never treated as certain.
 - Flags JWTs, IPv4 addresses, domains, URLs, and common hash lengths.
 - Measures Shannon entropy and gives an explainable triage score.
 - Inspects JWT headers and payloads without claiming signature verification.
@@ -363,6 +371,7 @@ tags = ["powershell", "execution"]
 category = "execution"
 confidence = "medium"
 references = ["internal-playbook-7"]
+attack = ["T1059.001", "T1027"]
 max_matches = 100
 
 [[rules]]
@@ -407,8 +416,11 @@ pattern = "cmd.exe"
 case_insensitive = true
 ```
 
-`category`, `confidence` (`low`, `medium`, or `high`), and `references` are
-reporting metadata only. References are never opened or fetched. Unknown TOML
+`category`, `confidence` (`low`, `medium`, or `high`), `references`, and
+`attack` are reporting metadata only. `attack` accepts up to 16 unique MITRE
+ATT&CK tactic (`TA0002`), technique (`T1059`) or sub-technique (`T1059.001`)
+identifiers; reports list them with the matching rule and HTML reports
+summarize them as rule-declared coverage. References are never opened or fetched. Unknown TOML
 fields, duplicate IDs, invalid ranges, oversized condition groups, invalid
 patterns, and unsupported schema versions are rejected with actionable errors
 by `rules validate` and `rules scan`.
@@ -428,8 +440,9 @@ by `rules validate` and `rules scan`.
   sections, packer-associated names, and overlays are explainable triage
   properties, not malware verdicts.
 - Local rule matches are triage signals, not proof that a payload is malicious; review offsets and context before acting.
-- Rule confidence and references are author-supplied metadata, not validation
-  of a claim. Banshee never fetches rule references.
+- Rule confidence, references and ATT&CK identifiers are author-supplied
+  metadata, not validation of a claim or observed behavior. Banshee never
+  fetches rule references.
 - Evidence bundles omit the source sample by default. `--include-sample` is an
   explicit opt-in that copies it as `source-sample.bin`; protect and share such
   bundles according to the sensitivity of the original data.

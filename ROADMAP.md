@@ -256,5 +256,4 @@ These remain outside the committed sequence until the core phases are stable:
 
 - export compatible Banshee rules to a limited YARA subset;
 - `banshee doctor` for local installation diagnostics;
-- optional HTML report rendering;
 - expanded shell integration (PowerShell completion is already available).

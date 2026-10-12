@@ -6,7 +6,7 @@ mod model;
 
 pub use model::{AnalysisReport, EncodingKind, Finding, FindingKind, Layer, StopReason};
 
-use decoder::{decode, decode_binary};
+use decoder::{BinaryTransforms, decode, decode_binary};
 use detector::detect_best;
 use findings::extract_findings;
 
@@ -61,6 +61,7 @@ impl Analyzer {
                 confidence: detection.confidence,
                 input: current,
                 output: first_output,
+                detail: None,
             });
 
             let mut truncated_at = None;
@@ -72,9 +73,10 @@ impl Analyzer {
                 layers.push(Layer {
                     depth: layers.len() + 1,
                     kind: compression.kind,
-                    confidence: 0.99,
+                    confidence: compression.confidence,
                     input: compression.input_preview,
                     output: compression.output_preview,
+                    detail: compression.detail,
                 });
             }
             if let Some(value) = truncated_at {
@@ -120,7 +122,7 @@ impl Analyzer {
         }
 
         let descriptor = format!("<binary input: {} bytes>", input.len());
-        let Some(decoded) = decode_binary(input.to_vec()) else {
+        let Some(decoded) = decode_binary(input.to_vec(), BinaryTransforms::CompressionOnly) else {
             return AnalysisReport {
                 original: descriptor,
                 layers: Vec::new(),
@@ -140,9 +142,10 @@ impl Analyzer {
             .map(|(index, compression)| Layer {
                 depth: index + 1,
                 kind: compression.kind,
-                confidence: 0.99,
+                confidence: compression.confidence,
                 input: compression.input_preview,
                 output: compression.output_preview,
+                detail: compression.detail,
             })
             .collect::<Vec<_>>();
         if compression_count > layers.len() || layers.len() >= usize::from(self.max_depth) {
@@ -235,5 +238,108 @@ mod tests {
         assert_eq!(report.layers[0].kind, EncodingKind::Hex);
         assert_eq!(report.layers[1].kind, EncodingKind::Zlib);
         assert_eq!(report.final_value, "banshee");
+    }
+
+    fn utf16le(value: &str) -> Vec<u8> {
+        value.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn decodes_powershell_style_utf16le_base64() {
+        // Harmless stand-in for a `powershell -EncodedCommand` argument.
+        let encoded = STANDARD.encode(utf16le("Write-Output 'https://example.test/a'"));
+
+        let report = Analyzer::new(8).analyze(&encoded);
+        assert_eq!(report.layers[0].kind, EncodingKind::Base64);
+        assert_eq!(report.layers[1].kind, EncodingKind::Utf16Le);
+        assert_eq!(report.final_value, "Write-Output 'https://example.test/a'");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.value == "https://example.test/a")
+        );
+    }
+
+    #[test]
+    fn utf16le_requires_bom_or_consistent_zero_high_bytes() {
+        let mut with_bom = vec![0xFF, 0xFE];
+        with_bom.extend(utf16le("çalışma ölçümü"));
+        let report = Analyzer::new(8).analyze(&STANDARD.encode(with_bom));
+        assert_eq!(report.final_value, "çalışma ölçümü");
+
+        // Mostly-NUL binary must not be mistaken for UTF-16 text.
+        let binary = [0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00];
+        let report = Analyzer::new(8).analyze(&STANDARD.encode(binary));
+        assert!(
+            report
+                .layers
+                .iter()
+                .all(|layer| layer.kind != EncodingKind::Utf16Le)
+        );
+    }
+
+    #[test]
+    fn recovers_single_byte_xor_inside_base64_with_key_detail() {
+        let plain = b"connect to http://example.test/beacon every 60 seconds";
+        let xored = plain.iter().map(|byte| byte ^ 0xa5).collect::<Vec<_>>();
+
+        let report = Analyzer::new(8).analyze(&STANDARD.encode(xored));
+        assert_eq!(report.layers[0].kind, EncodingKind::Base64);
+        assert_eq!(report.layers[1].kind, EncodingKind::Xor);
+        assert_eq!(
+            report.layers[1].detail.as_deref(),
+            Some("single-byte key 0xa5")
+        );
+        assert!(report.layers[1].confidence <= 0.8);
+        assert_eq!(report.final_value.as_bytes(), plain);
+    }
+
+    #[test]
+    fn xor_is_not_attempted_on_short_payloads_or_raw_binary_input() {
+        let short = b"hi there"
+            .iter()
+            .map(|byte| byte ^ 0xa5)
+            .collect::<Vec<_>>();
+        let report = Analyzer::new(8).analyze(&STANDARD.encode(short));
+        assert!(
+            report
+                .layers
+                .iter()
+                .all(|layer| layer.kind != EncodingKind::Xor)
+        );
+
+        let raw = b"this is plain text that was xored with a key"
+            .iter()
+            .map(|byte| byte ^ 0xa5)
+            .collect::<Vec<_>>();
+        let report = Analyzer::new(8).analyze_bytes(&raw);
+        assert!(report.layers.is_empty());
+    }
+
+    #[test]
+    fn random_binary_payloads_rarely_produce_xor_layers() {
+        // Deterministic xorshift bytes; a false XOR key here would indicate an
+        // overly permissive text score.
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut false_positives = 0;
+        for _ in 0..500 {
+            let payload = (0..32)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    (state >> 24) as u8
+                })
+                .collect::<Vec<_>>();
+            let report = Analyzer::new(8).analyze(&STANDARD.encode(payload));
+            false_positives += usize::from(
+                report
+                    .layers
+                    .iter()
+                    .any(|layer| layer.kind == EncodingKind::Xor),
+            );
+        }
+        assert_eq!(false_positives, 0);
     }
 }

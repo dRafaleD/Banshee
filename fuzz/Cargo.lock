@@ -160,7 +160,9 @@ name = "banshee-fuzz"
 version = "0.0.0"
 dependencies = [
  "banshee",
+ "clap",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]
