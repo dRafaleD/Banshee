@@ -13,6 +13,8 @@ banshee whatis --file suspicious.txt
 banshee whatis --json "aGVsbG8="
 # UTF-16LE inside Base64, as used by PowerShell -EncodedCommand.
 banshee whatis "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAxAA=="
+# Script obfuscation is rewritten in place, never executed.
+banshee whatis "\$u=(\"{1}{0}\" -f 'tp://x.example.test','ht'); iex ([char[]](105,101,120) -join '')"
 # Heuristic single-byte XOR inside Base64; the layer reports the key.
 banshee whatis "xsrLy8DG0YXRyoXA3cTI1cnAi9HA1tGFwNPA19yFk5WF1sDGysvB1g=="
 banshee entropy "aGVsbG8gd29ybGQ="

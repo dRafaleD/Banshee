@@ -19,6 +19,7 @@ pub(super) fn detect_best(input: &str) -> Option<Detection> {
         detect_url(input),
         detect_hex(input),
         detect_base64(input),
+        super::script::detect(input),
     ]
     .into_iter()
     .flatten()

@@ -11,6 +11,7 @@ use crate::ioc::{ExtractOptions, IocKind, IocReport, extract};
 const MAX_TOKEN_BYTES: usize = 1024 * 1024;
 /// Upper bound on indicators added from decoded layers across one input.
 const MAX_DECODED_IOCS: usize = 10_000;
+const MAX_SCRIPT_LINE_BYTES: usize = 64 * 1024;
 const MAX_EXTRACTED_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +59,31 @@ pub fn analyze_with_source(
     let mut token_limit_reached = false;
 
     'lines: for (line_index, line) in analysis_input.lines().enumerate() {
+        // Script obfuscation such as `[char]72 + [char]105` spans whitespace,
+        // so lines with such constructs are also analyzed as a whole.
+        let statement = line.trim();
+        if statement.len() <= MAX_SCRIPT_LINE_BYTES
+            && has_script_hint(statement)
+            && seen.insert(statement.to_owned())
+        {
+            if tokens_scanned >= max_tokens {
+                token_limit_reached = true;
+                break 'lines;
+            }
+            tokens_scanned += 1;
+            let report = analyzer.analyze(statement);
+            if report
+                .layers
+                .first()
+                .is_some_and(|layer| layer.kind.is_script_transform())
+            {
+                analyses.push(TokenAnalysis {
+                    line: Some(line_index + 1),
+                    token: statement.to_owned(),
+                    report,
+                });
+            }
+        }
         for raw_token in line.split_whitespace() {
             let token = clean_token(raw_token);
             if token.len() < 4 || token.len() > MAX_TOKEN_BYTES || !seen.insert(token.to_owned()) {
@@ -99,6 +125,18 @@ pub fn analyze_with_source(
         positions_available: true,
         binary: None,
     }
+}
+
+/// Cheap prefilter for whole-line script deobfuscation.
+fn has_script_hint(line: &str) -> bool {
+    static HINT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    HINT.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)fromcharcode|\[char|\bchrw?\$?\s*\(|-bxor|\\x[0-9a-f]{2}|\.reverse\(|\]\s*-join|['"]\s*-f\s*['"]|['"]\s*[+&]\s*['"]"#,
+        )
+        .expect("valid script hint regex")
+    })
+    .is_match(line)
 }
 
 /// Adds indicators that only appear after decoding, such as a URL inside a
@@ -374,5 +412,28 @@ powershell -enc {encoded}
         assert_eq!(urls[0].source, "input");
         let serialized = serde_json::to_string(&report.iocs).expect("serialize IOCs");
         assert!(!serialized.contains(secret));
+    }
+
+    #[test]
+    fn analyzes_obfuscated_script_lines_as_a_whole() {
+        let input = concat!(
+            "Write-Host ready\n",
+            "$u = 'ht' + 'tp://' + 'c2.exam' + 'ple.test/p'; iex ([char]105 + [char]101 + [char]120)\n",
+        );
+        let report = analyze(input, 8, 100);
+        let line = report
+            .analyses
+            .iter()
+            .find(|analysis| analysis.line == Some(2) && analysis.token.starts_with("$u ="))
+            .expect("whole-line analysis");
+        assert!(line.report.layers[0].kind.is_script_transform());
+        let url = report
+            .iocs
+            .iocs
+            .iter()
+            .find(|ioc| ioc.value == "http://c2.example.test/p")
+            .expect("deobfuscated URL");
+        assert_eq!(url.source, "input (decoded)");
+        assert_eq!(url.first_line, Some(2));
     }
 }

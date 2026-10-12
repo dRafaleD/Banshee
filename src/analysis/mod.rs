@@ -3,6 +3,7 @@ mod detector;
 pub mod entropy;
 mod findings;
 mod model;
+mod script;
 
 pub use model::{AnalysisReport, EncodingKind, Finding, FindingKind, Layer, StopReason};
 
@@ -42,7 +43,7 @@ impl Analyzer {
                 break StopReason::NoFurtherEncoding;
             };
 
-            let Some(decoded) = decode(detection.kind, &current) else {
+            let Some(mut decoded) = decode(detection.kind, &current) else {
                 break StopReason::DecodeFailed;
             };
 
@@ -61,7 +62,7 @@ impl Analyzer {
                 confidence: detection.confidence,
                 input: current,
                 output: first_output,
-                detail: None,
+                detail: decoded.detail.take(),
             });
 
             let mut truncated_at = None;
@@ -339,6 +340,51 @@ mod tests {
                     .iter()
                     .any(|layer| layer.kind == EncodingKind::Xor),
             );
+        }
+        assert_eq!(false_positives, 0);
+    }
+
+    #[test]
+    fn recovers_repeating_key_xor_with_the_shortest_key() {
+        let plain = b"GET http://beacon.example.test/tasks?id=42 every 300 seconds with retry";
+        let key = [0x9c, 0x31, 0xe7];
+        let xored = plain
+            .iter()
+            .zip(key.iter().cycle())
+            .map(|(byte, key)| byte ^ key)
+            .collect::<Vec<_>>();
+
+        let report = Analyzer::new(8).analyze(&STANDARD.encode(xored));
+        assert_eq!(report.layers[1].kind, EncodingKind::Xor);
+        assert_eq!(
+            report.layers[1].detail.as_deref(),
+            Some("repeating 3-byte key 0x9c31e7")
+        );
+        assert_eq!(report.final_value.as_bytes(), plain);
+    }
+
+    #[test]
+    fn random_payloads_rarely_produce_repeating_xor_layers() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut false_positives = 0;
+        for length in [48, 96, 192] {
+            for _ in 0..200 {
+                let payload = (0..length)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        (state >> 24) as u8
+                    })
+                    .collect::<Vec<_>>();
+                let report = Analyzer::new(8).analyze(&STANDARD.encode(payload));
+                false_positives += usize::from(
+                    report
+                        .layers
+                        .iter()
+                        .any(|layer| layer.kind == EncodingKind::Xor),
+                );
+            }
         }
         assert_eq!(false_positives, 0);
     }

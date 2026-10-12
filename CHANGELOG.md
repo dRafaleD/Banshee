@@ -35,6 +35,14 @@ changes must be called out explicitly. Tags are immutable.
 - Optional rule `attack` metadata for MITRE ATT&CK tactic, technique and
   sub-technique identifiers, strictly validated and shown with rule findings
   and as rule-declared coverage in HTML reports. Omitted from JSON when unset.
+- Script deobfuscation layers: character codes (`String.fromCharCode`,
+  `[char]` runs and arrays, VBScript `Chr`/`ChrW`, including nearby `-bxor`/`^`
+  keys), `\xNN` escapes, string concatenation, PowerShell `-f` format strings
+  and reversed literals. Only the construct is rewritten; nothing is executed.
+  Lines containing such constructs are also analyzed as a whole in reports,
+  scans and bulk analysis.
+- Repeating-key XOR (2-16 byte keys) inside Base64/Hex payloads up to 16 KiB,
+  reported with the recovered key after single-byte keys are ruled out.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule

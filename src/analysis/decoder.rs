@@ -12,11 +12,18 @@ const MAX_COMPRESSION_LAYERS: usize = 4;
 const MIN_XOR_BYTES: usize = 16;
 const MAX_XOR_BYTES: usize = 64 * 1024;
 const MIN_XOR_TEXT_SCORE: f32 = 0.75;
+/// Repeating-key XOR: key lengths and the payload size searched for them.
+const MAX_REPEATING_XOR_KEY: usize = 16;
+const MAX_REPEATING_XOR_BYTES: usize = 16 * 1024;
+/// Each key byte must be supported by at least this many payload bytes.
+const MIN_BYTES_PER_KEY_BYTE: usize = 12;
 const MIN_UTF16_BYTES: usize = 4;
 
 pub(super) struct DecodeResult {
     pub output: String,
     pub compression_layers: Vec<CompressionLayer>,
+    /// Optional explanation for the outer layer, such as a recovered key.
+    pub detail: Option<String>,
 }
 
 /// A byte-level layer found after an outer text encoding: decompression,
@@ -45,6 +52,11 @@ pub(super) fn decode(kind: EncodingKind, input: &str) -> Option<DecodeResult> {
             text_result(html_escape::decode_html_entities(input).into_owned())
         }
         EncodingKind::UnicodeEscape => text_result(crate::codec::decode_unicode(input).ok()?),
+        EncodingKind::CharCodes
+        | EncodingKind::HexEscape
+        | EncodingKind::StringConcat
+        | EncodingKind::FormatString
+        | EncodingKind::ReversedString => super::script::decode(kind, input),
         EncodingKind::Gzip | EncodingKind::Zlib | EncodingKind::Utf16Le | EncodingKind::Xor => None,
     }
 }
@@ -113,6 +125,7 @@ fn text_result(output: String) -> Option<DecodeResult> {
     Some(DecodeResult {
         output,
         compression_layers: Vec::new(),
+        detail: None,
     })
 }
 
@@ -151,19 +164,28 @@ pub(super) fn decode_binary(
             return Some(DecodeResult {
                 output: text,
                 compression_layers,
+                detail: None,
             });
         }
         if xor_applied || is_printable_text(&bytes) {
             break;
         }
-        let Some((key, decoded, score)) = single_byte_xor(&bytes) else {
+        let Some((key, decoded, score)) = recover_xor(&bytes) else {
             break;
         };
+        let hex_key = key
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         compression_layers.push(CompressionLayer {
             kind: EncodingKind::Xor,
             input_preview: format!("<XOR payload: {} bytes>", bytes.len()),
             output_preview: String::from_utf8_lossy(&decoded).into_owned(),
-            detail: Some(format!("single-byte key 0x{key:02x}")),
+            detail: Some(if key.len() == 1 {
+                format!("single-byte key 0x{hex_key}")
+            } else {
+                format!("repeating {}-byte key 0x{hex_key}", key.len())
+            }),
             confidence: xor_confidence(score),
         });
         bytes = decoded;
@@ -173,6 +195,7 @@ pub(super) fn decode_binary(
     Some(DecodeResult {
         output,
         compression_layers,
+        detail: None,
     })
 }
 
@@ -188,7 +211,7 @@ pub(super) fn encoded_payload_confidence(bytes: &[u8]) -> Option<f32> {
     if is_printable_text(bytes) {
         return None;
     }
-    single_byte_xor(bytes).map(|(_, _, score)| xor_confidence(score))
+    recover_xor(bytes).map(|(_, _, score)| xor_confidence(score))
 }
 
 fn xor_confidence(score: f32) -> f32 {
@@ -229,32 +252,63 @@ fn is_printable_text(bytes: &[u8]) -> bool {
     })
 }
 
-/// Returns the key whose output is entirely printable ASCII and most resembles
-/// text. Ties keep the lowest key so results are deterministic.
-fn single_byte_xor(bytes: &[u8]) -> Option<(u8, Vec<u8>, f32)> {
+/// Tries a single-byte key first, then the shortest repeating key whose
+/// output is entirely printable and text-like.
+fn recover_xor(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>, f32)> {
     if !(MIN_XOR_BYTES..=MAX_XOR_BYTES).contains(&bytes.len()) {
         return None;
     }
+    let lengths = 1..=MAX_REPEATING_XOR_KEY.min(bytes.len() / MIN_BYTES_PER_KEY_BYTE);
+    for length in lengths {
+        if length > 1 && bytes.len() > MAX_REPEATING_XOR_BYTES {
+            break;
+        }
+        let Some(key) = (0..length)
+            .map(|column| best_column_key(bytes.iter().skip(column).step_by(length).copied()))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let decoded = bytes
+            .iter()
+            .zip(key.iter().cycle())
+            .map(|(byte, key)| byte ^ key)
+            .collect::<Vec<_>>();
+        let text_like = decoded
+            .iter()
+            .filter(|value| value.is_ascii_alphanumeric() || **value == b' ')
+            .count();
+        let score = text_like as f32 / bytes.len() as f32;
+        if score >= MIN_XOR_TEXT_SCORE {
+            return Some((key, decoded, score));
+        }
+    }
+    None
+}
+
+/// Returns the key byte under which every value is printable ASCII and the
+/// values score most like text. Ties keep the lowest key for determinism.
+fn best_column_key(column: impl Iterator<Item = u8> + Clone) -> Option<u8> {
     let mut best: Option<(u8, usize)> = None;
-    for key in 1..=u8::MAX {
+    for key in 0..=u8::MAX {
         let mut text_like = 0;
-        let printable = bytes.iter().all(|byte| {
+        let printable = column.clone().all(|byte| {
             let value = byte ^ key;
-            if value.is_ascii_alphanumeric() || value == b' ' {
-                text_like += 1;
-            }
+            // Spaces and lowercase letters dominate text; weighting them stops
+            // a nearby key that maps spaces to digits from scoring higher.
+            text_like += match value {
+                b' ' => 3,
+                b'a'..=b'z' => 2,
+                b'A'..=b'Z' | b'0'..=b'9' => 1,
+                _ => 0,
+            };
             matches!(value, 0x20..=0x7E | b'\t' | b'\n' | b'\r')
         });
         if printable && best.is_none_or(|(_, current)| text_like > current) {
             best = Some((key, text_like));
         }
     }
-    let (key, text_like) = best?;
-    let score = text_like as f32 / bytes.len() as f32;
-    if score < MIN_XOR_TEXT_SCORE {
-        return None;
-    }
-    Some((key, bytes.iter().map(|byte| byte ^ key).collect(), score))
+    best.map(|(key, _)| key)
 }
 
 pub(super) fn compression_kind(bytes: &[u8]) -> Option<EncodingKind> {

@@ -116,8 +116,11 @@ The initial foundation includes the following commands:
 - Recursively decodes nested layers with depth and size limits.
 - Detects Base64/Hex-wrapped gzip and zlib layers with a 16 MiB decompression limit.
 - Unwraps UTF-16LE text (for example PowerShell `-EncodedCommand`) and
-  heuristic single-byte XOR layers inside Base64/Hex payloads; XOR keys are
-  reported and never treated as certain.
+  heuristic single-byte and repeating-key XOR layers inside Base64/Hex
+  payloads; XOR keys are reported and never treated as certain.
+- Rewrites common script obfuscation without executing it: character-code
+  arrays, `\xNN` escapes, string concatenation, PowerShell format strings and
+  reversed literals.
 - Flags JWTs, IPv4 addresses, domains, URLs, and common hash lengths.
 - Measures Shannon entropy and gives an explainable triage score.
 - Inspects JWT headers and payloads without claiming signature verification.
