@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 
 use super::binary::{
-    display_section_name, file_slice, read_c_string, read_c_string_u64, read_file_string, read_u16,
-    read_u32, read_u64,
+    display_section_name, file_slice, range_entropy, read_c_string, read_c_string_u64,
+    read_file_string, read_u16, read_u32, read_u64,
 };
 use super::{
     ExecutableReport, ExecutableSection, MAX_EXECUTABLE_SECTIONS, MAX_EXECUTABLE_STRING_BYTES,
@@ -76,6 +76,9 @@ pub(super) fn inspect_elf(bytes: &[u8]) -> Result<Option<ExecutableReport>> {
         debug_info_present: None,
         parse_warnings: Vec::new(),
         suspicious_properties: Vec::new(),
+        imphash: None,
+        rich_header: None,
+        tls_callbacks: None,
     };
     enrich_elf(bytes, bits, little, &mut report);
     Ok(Some(report))
@@ -440,6 +443,11 @@ fn parse_elf_sections(
             allocated: Some(allocated),
             writable,
             executable,
+            entropy: if section.kind == 8 {
+                None
+            } else {
+                range_entropy(bytes, section.offset, section.size)
+            },
         });
     }
     report.stripped = Some(!names.iter().any(|name| name == ".symtab"));

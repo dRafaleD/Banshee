@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 
 use super::binary::{
-    bounded_name, display_section_name, is_packer_section_name, read_c_string, read_u16, read_u32,
-    read_u64,
+    bounded_name, display_section_name, is_packer_section_name, range_entropy, read_c_string,
+    read_u16, read_u32, read_u64,
 };
 use super::{
     ExecutableReport, ExecutableSection, ImportLibrary, MAX_EXECUTABLE_SECTIONS,
@@ -57,8 +57,13 @@ pub(super) fn inspect_pe(bytes: &[u8]) -> Result<Option<ExecutableReport>> {
         debug_info_present: None,
         parse_warnings: Vec::new(),
         suspicious_properties: Vec::new(),
+        imphash: None,
+        rich_header: None,
+        tls_callbacks: None,
     };
+    report.rich_header = super::pe_extra::rich_header(bytes, pe_offset);
     enrich_pe(bytes, pe_offset, optional, bits, sections, &mut report);
+    super::pe_extra::annotate(&mut report, entry);
     Ok(Some(report))
 }
 
@@ -156,6 +161,7 @@ fn enrich_pe(
             allocated: None,
             writable,
             executable,
+            entropy: range_entropy(bytes, u64::from(raw_offset), u64::from(raw_size)),
         });
         section_maps.push(PeSectionMap {
             virtual_address,
@@ -202,6 +208,35 @@ fn enrich_pe(
             size_of_headers,
             report,
         );
+    }
+
+    if let Some((tls_rva, tls_size)) = directory(9)
+        && tls_rva != 0
+        && tls_size != 0
+    {
+        let image_base = if bits == 64 {
+            read_u64(bytes, optional + 24, true)
+        } else {
+            read_u32(bytes, optional + 28, true).map(u64::from)
+        };
+        let count = pe_rva_to_offset(tls_rva, &section_maps, size_of_headers).and_then(|offset| {
+            super::pe_extra::tls_callback_count(bytes, offset, bits, image_base?, |rva| {
+                pe_rva_to_offset(rva, &section_maps, size_of_headers)
+            })
+        });
+        match count {
+            Some(count) => {
+                report.tls_callbacks = Some(count);
+                if count > 0 {
+                    report.suspicious_properties.push(format!(
+                        "PE declares {count} TLS callback(s), which run before the entry point"
+                    ));
+                }
+            }
+            None => report
+                .parse_warnings
+                .push("PE TLS directory cannot be mapped to file data".to_owned()),
+        }
     }
 
     let mut certificate_range = None;

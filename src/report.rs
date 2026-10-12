@@ -362,12 +362,23 @@ pub fn generate(
         sha1: digest(&bytes, HashAlgorithm::Sha1)?,
         sha256: file.sha256.clone(),
     };
-    let content_report = crate::batch::analyze_bytes_with_source(
+    let mut content_report = crate::batch::analyze_bytes_with_source(
         &bytes,
         max_depth,
         max_tokens,
         &path.display().to_string(),
     );
+    if let Some(document) = &file.document {
+        // Shortcut arguments and package relationships are UTF-16 or compressed,
+        // so printable-string extraction alone would miss their indicators.
+        crate::batch::merge_supplementary_text(
+            &mut content_report,
+            &document.analysis_text(),
+            max_depth,
+            max_tokens,
+            &format!("{} (document metadata)", path.display()),
+        );
+    }
     let content_analysis = ContentAnalysis {
         status: SectionStatus::Completed,
         mode: if content_report.binary.is_some() {
@@ -612,6 +623,9 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
             )?;
         }
     }
+    if let Some(document) = &report.file.document {
+        crate::output::write_document(output, document)?;
+    }
     if let Some(archive) = &report.file.archive {
         writeln!(
             output,
@@ -726,6 +740,7 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
                 ""
             }
         )?;
+        crate::output::write_pe_metadata(output, executable, "- ")?;
         if let Some(present) = executable.signature_present {
             writeln!(
                 output,
@@ -755,6 +770,28 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
                 output,
                 "- Executable parser warnings: {} (not suspicious findings)",
                 executable.parse_warnings.len()
+            )?;
+        }
+    }
+    if let Some(document) = &report.file.document {
+        writeln!(output, "- Document: {}", markdown(&document.kind))?;
+        if let Some(macros) = document.macros_present {
+            writeln!(output, "- Macros present: {macros}")?;
+        }
+        for property in &document.properties {
+            writeln!(
+                output,
+                "- {}: `{}`",
+                markdown(&property.name),
+                markdown(&property.value)
+            )?;
+        }
+        for target in &document.external_targets {
+            writeln!(
+                output,
+                "- External {}: `{}`",
+                markdown(&target.relationship),
+                markdown(&target.target)
             )?;
         }
     }

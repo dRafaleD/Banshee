@@ -413,6 +413,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                         writeln!(output, "Type: {}", executable.kind)?;
                         writeln!(output, "Entry point: {}", executable.entry_point)?;
                         writeln!(output, "Sections: {}", executable.sections)?;
+                        output::write_pe_metadata(output, executable, "")?;
                         if let Some(endianness) = &executable.endianness {
                             writeln!(output, "Endianness: {endianness}")?;
                         }
@@ -529,6 +530,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 }
                             )?;
                         }
+                    }
+                    if let Some(document) = &report.document {
+                        output::write_document(output, document)?;
                     }
                     for finding in &report.findings {
                         writeln!(output, "Finding: {}", output::terminal_safe(finding))?;

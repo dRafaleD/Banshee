@@ -19,8 +19,8 @@ or broken invariants. Samples are never loaded or executed.
 `rules_scan` splits its input at the first `0x00` byte (rule TOML, then content);
 `recipe` splits at the first newline (recipe expression, then input bytes).
 
-Seed generation for `file_inspect` verifies eight synthetic PE/ELF/archive/
-compressed fixtures before writing them with exclusive creation. Small harmless
+Seed generation for `file_inspect` verifies twelve synthetic PE/ELF/archive/
+compressed/OOXML/OLE/PDF/LNK fixtures before writing them with exclusive creation. Small harmless
 seeds for the other targets live in `fuzz/seeds/<target>/`; copy them into the
 corpus directory before the first run.
 

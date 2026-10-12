@@ -10,12 +10,17 @@ use xz2::read::XzDecoder;
 
 mod archive;
 mod binary;
+mod document;
 mod elf;
+mod ordinals;
 mod pe;
+mod pe_extra;
 
 use archive::{inspect_tar, inspect_zip, is_tar, is_zip};
+pub use document::{DocumentProperty, DocumentReport, ExternalTarget};
 use elf::inspect_elf;
 use pe::inspect_pe;
+pub use pe_extra::{RichEntry, RichHeader};
 
 const MAX_INPUT_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_DECOMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
@@ -34,6 +39,9 @@ pub struct FileReport {
     pub compression: Option<CompressionReport>,
     pub archive: Option<ArchiveReport>,
     pub executable: Option<ExecutableReport>,
+    /// Office, PDF or shortcut structure; omitted for other formats.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<DocumentReport>,
     pub findings: Vec<String>,
 }
 
@@ -91,6 +99,13 @@ pub struct ExecutableReport {
     pub debug_info_present: Option<bool>,
     pub parse_warnings: Vec<String>,
     pub suspicious_properties: Vec<String>,
+    /// pefile-compatible import hash; omitted when imports are incomplete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imphash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rich_header: Option<RichHeader>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_callbacks: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +119,9 @@ pub struct ExecutableSection {
     pub allocated: Option<bool>,
     pub writable: bool,
     pub executable: bool,
+    /// Shannon entropy of the section's file data in bits per byte.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entropy: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,12 +173,25 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
         compression: None,
         archive: None,
         executable: None,
+        document: None,
         findings: Vec::new(),
     };
 
     if is_zip(bytes) {
         report.format = "ZIP archive".to_owned();
         report.archive = Some(inspect_zip(bytes, max_entries, &mut report.findings)?);
+        if let Some(document) = document::inspect_ooxml(bytes) {
+            report.format = document.kind.clone();
+            attach_document(&mut report, document);
+        }
+    } else if document::is_ole(bytes) {
+        let document = document::inspect_ole(bytes);
+        report.format = document.kind.clone();
+        attach_document(&mut report, document);
+    } else if document::is_lnk(bytes) {
+        report.format = "Windows shortcut (LNK)".to_owned();
+        let document = document::inspect_lnk(bytes)?;
+        attach_document(&mut report, document);
     } else if is_tar(bytes) {
         report.format = "TAR archive".to_owned();
         report.archive = Some(inspect_tar(bytes, max_entries, &mut report.findings)?);
@@ -188,6 +219,9 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
     } else if let Some(executable) = inspect_pe(bytes)? {
         report.format = "PE executable".to_owned();
         attach_executable(&mut report, executable);
+    } else if document::is_pdf(bytes) {
+        report.format = "PDF document".to_owned();
+        attach_document(&mut report, document::inspect_pdf(bytes));
     }
 
     Ok(report)
@@ -222,6 +256,13 @@ fn inspect_compressed<R: Read>(
         attach_executable(report, executable);
     }
     Ok(())
+}
+
+fn attach_document(report: &mut FileReport, document: DocumentReport) {
+    report
+        .findings
+        .extend(document.suspicious_properties.iter().cloned());
+    report.document = Some(document);
 }
 
 fn attach_executable(report: &mut FileReport, executable: ExecutableReport) {

@@ -127,6 +127,64 @@ pub fn analyze_with_source(
     }
 }
 
+/// Analyzes text recovered from file structure (for example shortcut
+/// arguments) and merges new analyses and indicators into `report` without
+/// positions, since they do not map to lines of the original input.
+pub fn merge_supplementary_text(
+    report: &mut BatchReport,
+    text: &str,
+    max_depth: u8,
+    max_tokens: usize,
+    source: &str,
+) {
+    if text.trim().is_empty() {
+        return;
+    }
+    let remaining = max_tokens.saturating_sub(report.tokens_scanned);
+    let extra = analyze_with_source(text, max_depth, remaining, source);
+    report.tokens_scanned += extra.tokens_scanned;
+    report.token_limit_reached |= extra.token_limit_reached;
+    let mut known_tokens = report
+        .analyses
+        .iter()
+        .map(|analysis| analysis.token.clone())
+        .collect::<HashSet<_>>();
+    for mut analysis in extra.analyses {
+        if known_tokens.insert(analysis.token.clone()) {
+            analysis.line = None;
+            report.analyses.push(analysis);
+        }
+    }
+    let mut known = report
+        .iocs
+        .iocs
+        .iter()
+        .map(|ioc| (ioc.kind, ioc.value.clone()))
+        .collect::<HashSet<(IocKind, String)>>();
+    let before = report.iocs.iocs.len();
+    for mut ioc in extra.iocs.iocs {
+        if !known.insert((ioc.kind, ioc.value.clone())) {
+            continue;
+        }
+        ioc.first_line = None;
+        ioc.last_line = None;
+        ioc.first_column = None;
+        ioc.locations.clear();
+        ioc.locations_truncated = false;
+        report.iocs.iocs.push(ioc);
+    }
+    report.iocs.match_limit_reached |= extra.iocs.match_limit_reached;
+    if report.iocs.iocs.len() > before {
+        report.iocs.iocs.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.value.cmp(&right.value))
+        });
+        report.iocs.total = report.iocs.iocs.len();
+        report.iocs.total_occurrences = report.iocs.iocs.iter().map(|ioc| ioc.occurrences).sum();
+    }
+}
+
 /// Cheap prefilter for whole-line script deobfuscation.
 fn has_script_hint(line: &str) -> bool {
     static HINT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();

@@ -43,6 +43,26 @@ changes must be called out explicitly. Tags are immutable.
   scans and bulk analysis.
 - Repeating-key XOR (2-16 byte keys) inside Base64/Hex payloads up to 16 KiB,
   reported with the recovered key after single-byte keys are ruled out.
+- Document and shortcut inspection in `file inspect`, `report`, `scan` and
+  evidence bundles, reported in an optional `file.document` section:
+  - OOXML: VBA projects, embedded OLE objects, ActiveX controls, external
+    relationships (remote templates, OLE links, frames) and DDE fields;
+  - OLE compound files: document type, VBA storages, `Ole10Native` packages and
+    encrypted packages from a bounded FAT/directory walk with a name-scan
+    fallback;
+  - PDF: JavaScript, automatic and launch actions, embedded files, `#xx`
+    name obfuscation and `/URI` targets;
+  - Windows shortcuts: target, arguments, working directory and icon, with
+    script-host launches, whitespace-padded or overlong arguments, minimized
+    windows and document-like icons flagged.
+  Targets and shortcut strings also feed content analysis and IOC extraction.
+- PE triage metadata: pefile-compatible `imphash` (including its Winsock and
+  OLE Automation ordinal names), decoded Rich header entries with checksum
+  validation, TLS callback counts, and per-section Shannon entropy (also for
+  ELF). High-entropy executable sections, entry points outside executable
+  sections, TLS callbacks and Rich checksum mismatches are flagged. Verified
+  against pefile on 300 local Windows system binaries with identical imphash
+  and TLS results.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule

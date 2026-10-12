@@ -34,7 +34,7 @@ Development guides: [installation](docs/INSTALLATION.md),
 | --- | --- | --- |
 | Understand an unknown value | `whatis`, `entropy`, `recipe` | Decoding layers and explainable signals |
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
-| Inspect local artifacts | `file inspect`, `jwt`, `cert`, `hash` | Structural metadata and explicit verification where supported |
+| Inspect local artifacts | `file inspect`, `jwt`, `cert`, `hash` | Structural metadata for archives, executables, Office, PDF and LNK files |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
@@ -139,8 +139,14 @@ The initial foundation includes the following commands:
 - Encodes and decodes Base64, Base64URL, Base32, Ascii85, Hex, Binary, Octal, ROT13, Punycode/IDNA, URL, HTML, and Unicode escapes.
 - Applies auditable, bounded transformation recipes including gzip and zlib layers.
 - Lists ZIP/TAR contents without extraction, inspects gzip/XZ/BZip2 payloads, and flags unsafe archive paths.
+- Inspects Office (OOXML and legacy OLE), PDF and Windows shortcut (LNK) files
+  for macros, remote templates, DDE fields, embedded objects, PDF actions and
+  JavaScript, and hidden or script-launching shortcut arguments. Nothing is
+  rendered, executed or extracted, and macro source code is not decompressed.
 - Parses PE imports, named exports, section permissions, overlay data, and
   certificate-table presence metadata without verifying Authenticode trust.
+- Computes pefile-compatible PE import hashes, decodes and validates Rich
+  headers, counts TLS callbacks and reports per-section entropy.
 - Parses ELF interpreters, dynamic dependencies, RPATH/RUNPATH, section
   permissions, and stripped/debug indicators.
 - Validates and scans with bounded local TOML rules using regex, literal, or

@@ -74,6 +74,9 @@ pub(crate) fn write_html(output: &mut dyn Write, report: &UnifiedReport) -> Resu
     if let Some(executable) = &file.executable {
         write_executable(output, executable)?;
     }
+    if let Some(document) = &file.document {
+        write_document(output, document)?;
+    }
     if let Some(archive) = &file.archive {
         write_archive(output, archive)?;
     }
@@ -344,6 +347,27 @@ fn write_executable(
         ),
     )?;
     row(output, "Entry point", &code(&executable.entry_point))?;
+    if let Some(imphash) = &executable.imphash {
+        row(output, "Imphash", &code(imphash))?;
+    }
+    if let Some(rich) = &executable.rich_header {
+        row(
+            output,
+            "Rich header",
+            &format!(
+                "{} entries; checksum {}",
+                rich.entries.len(),
+                if rich.checksum_valid {
+                    "valid"
+                } else {
+                    "<b>mismatch</b>"
+                }
+            ),
+        )?;
+    }
+    if let Some(callbacks) = executable.tls_callbacks {
+        row(output, "TLS callbacks", &callbacks.to_string())?;
+    }
     if let Some(subsystem) = &executable.subsystem {
         row(output, "Subsystem", &escape(subsystem))?;
     }
@@ -395,7 +419,7 @@ fn write_executable(
         writeln!(
             output,
             "<h2 style=\"margin-top:16px\">Sections{}</h2><div class=\"scroll\"><table><thead><tr>\
-             <th>Name</th><th>Address</th><th>File size</th><th>Memory size</th><th>Flags</th>\
+             <th>Name</th><th>Address</th><th>File size</th><th>Memory size</th><th>Entropy</th><th>Flags</th>\
              </tr></thead><tbody>",
             if executable.sections_truncated {
                 " (truncated)"
@@ -415,11 +439,14 @@ fn write_executable(
             writeln!(
                 output,
                 "<tr><td class=\"mono\">{}</td><td class=\"mono\">{}</td><td>{}</td><td>{}</td>\
-                 <td class=\"mono\">{}</td></tr>",
+                 <td>{}</td><td class=\"mono\">{}</td></tr>",
                 escape(&section.name),
                 escape(&section.virtual_address),
                 section.file_size,
                 section.memory_size,
+                section
+                    .entropy
+                    .map_or_else(|| "—".to_owned(), |entropy| format!("{entropy:.2}")),
                 flags
             )?;
         }
@@ -481,6 +508,54 @@ fn write_executable(
             if truncated { ", truncated" } else { "" },
             escape(&values.join(", "))
         )?;
+    }
+    writeln!(output, "</section>")?;
+    Ok(())
+}
+
+fn write_document(
+    output: &mut dyn Write,
+    document: &crate::file_inspect::DocumentReport,
+) -> Result<()> {
+    writeln!(output, "<section><h2>{}</h2><dl>", escape(&document.kind))?;
+    if let Some(macros) = document.macros_present {
+        row(output, "Macros present", &macros.to_string())?;
+    }
+    for property in &document.properties {
+        row(output, &property.name, &code(&property.value))?;
+    }
+    for note in &document.suspicious_properties {
+        row(output, "Notable", &escape(note))?;
+    }
+    for note in &document.notes {
+        row(
+            output,
+            "Limitation",
+            &format!("<span class=\"muted\">{}</span>", escape(note)),
+        )?;
+    }
+    writeln!(output, "</dl>")?;
+    if !document.external_targets.is_empty() {
+        writeln!(
+            output,
+            "<h2 style=\"margin-top:16px\">External references{}</h2><div class=\"scroll\"><table>\
+             <thead><tr><th>Relationship</th><th>Target</th></tr></thead><tbody>",
+            if document.targets_truncated {
+                " (truncated)"
+            } else {
+                ""
+            }
+        )?;
+        // Targets are printed as inert text; they are never turned into links.
+        for target in &document.external_targets {
+            writeln!(
+                output,
+                "<tr><td>{}</td><td class=\"mono\">{}</td></tr>",
+                escape(&target.relationship),
+                escape(&clip(&target.target))
+            )?;
+        }
+        writeln!(output, "</tbody></table></div>")?;
     }
     writeln!(output, "</section>")?;
     Ok(())

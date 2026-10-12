@@ -67,6 +67,9 @@ cat suspicious.log | banshee analyze --json
 banshee analyze --file suspicious.bin
 banshee encode base64 --file payload.bin
 banshee file inspect suspicious.zip
+banshee file inspect invoice.docm        # macros, remote templates, DDE fields
+banshee file inspect statement.pdf       # JavaScript, actions, /URI targets
+banshee file inspect "Invoice.pdf.lnk"   # target, hidden arguments, icon decoys
 banshee file inspect package.tar.xz --json
 banshee file inspect suspicious.exe
 banshee file inspect application.elf --json

@@ -84,3 +84,23 @@ pub(super) fn read_u64(bytes: &[u8], offset: usize, little: bool) -> Option<u64>
         u64::from_be_bytes(value)
     })
 }
+
+/// Shannon entropy in bits per byte of a section's file data, or `None` when
+/// the declared range is empty or outside the file.
+pub(super) fn range_entropy(bytes: &[u8], offset: u64, size: u64) -> Option<f64> {
+    let data = file_slice(bytes, offset, size).filter(|data| !data.is_empty())?;
+    let mut counts = [0_u64; 256];
+    for byte in data {
+        counts[usize::from(*byte)] += 1;
+    }
+    let length = data.len() as f64;
+    let entropy = counts
+        .iter()
+        .filter(|count| **count > 0)
+        .map(|count| {
+            let probability = *count as f64 / length;
+            -probability * probability.log2()
+        })
+        .sum::<f64>();
+    Some((entropy * 100.0).round() / 100.0)
+}
