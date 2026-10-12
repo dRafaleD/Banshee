@@ -5,6 +5,8 @@ use anyhow::{Context, Result, bail};
 use regex::bytes::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
+pub mod yara;
+
 const MAX_RULE_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_SCAN_BYTES: usize = 64 * 1024 * 1024;
 const MAX_RULES: usize = 1_000;

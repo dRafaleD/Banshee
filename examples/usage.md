@@ -93,6 +93,8 @@ banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --max-file-size 32MiB --max-total-size 512MiB
 banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
 banshee rules validate examples/rules.toml
+banshee rules export-yara examples/rules.toml --output banshee.yar
+banshee rules import-yara community.yar --output imported.toml
 banshee rules validate examples/rules.toml --json
 cat suspicious.log | banshee rules scan --rules examples/rules.toml
 banshee rules scan --rules examples/rules.toml --file payload.bin --fail-on-findings

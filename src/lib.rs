@@ -607,6 +607,25 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     Ok(())
                 })?;
             }
+            RulesCommand::ExportYara(args) => {
+                let conversion = rules::yara::export_file(&args.path)?;
+                report_conversion(&conversion, "YARA")?;
+            }
+            RulesCommand::ImportYara(args) => {
+                let conversion = rules::yara::import_file(&args.path)?;
+                if conversion.converted == 0 {
+                    anyhow::bail!(
+                        "no YARA rules could be converted: {}",
+                        conversion
+                            .skipped
+                            .iter()
+                            .map(|rule| format!("{}: {}", rule.rule, rule.reason))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    );
+                }
+                report_conversion(&conversion, "Banshee TOML")?;
+            }
             RulesCommand::Scan(args) => {
                 let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
                 let report = rules::scan(&args.rules, &value)?;
@@ -960,4 +979,30 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         );
     }
     Ok(outcome)
+}
+
+/// Writes converted rules and summarizes skipped rules and warnings on stderr.
+fn report_conversion(conversion: &rules::yara::Conversion, target: &str) -> Result<()> {
+    output::with_output(|output| {
+        output
+            .write_all(conversion.output.as_bytes())
+            .context("failed to write converted rules")
+    })?;
+    eprintln!(
+        "converted {} rule(s) to {target}; skipped {}; {} warning(s)",
+        conversion.converted,
+        conversion.skipped.len(),
+        conversion.warnings.len()
+    );
+    for rule in &conversion.skipped {
+        eprintln!(
+            "skipped {}: {}",
+            output::terminal_safe(&rule.rule),
+            output::terminal_safe(&rule.reason)
+        );
+    }
+    for warning in &conversion.warnings {
+        eprintln!("warning: {}", output::terminal_safe(warning));
+    }
+    Ok(())
 }

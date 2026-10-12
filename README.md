@@ -425,6 +425,17 @@ pattern = "cmd.exe"
 case_insensitive = true
 ```
 
+### YARA interoperability
+
+`banshee rules export-yara RULES.toml` writes YARA rules; anything YARA cannot
+express exactly (for example the `text` file type) becomes a warning comment,
+and unsupported regex features skip the rule with a reason.
+`banshee rules import-yara RULES.yar` converts a subset: text, plain hex and
+regex strings (`nocase`), `$a`, `#a >= N`, `and`/`or`, `any/all of them`,
+string sets such as `any of ($x*)`, PE/ELF/ZIP/gzip magic checks and
+`math.entropy` bounds. Modifiers such as `wide`, `xor` or `fullword`, hex jumps
+and `N of them` are reported per rule instead of being approximated.
+
 `category`, `confidence` (`low`, `medium`, or `high`), `references`, and
 `attack` are reporting metadata only. `attack` accepts up to 16 unique MITRE
 ATT&CK tactic (`TA0002`), technique (`T1059`) or sub-technique (`T1059.001`)

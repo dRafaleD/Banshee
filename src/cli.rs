@@ -467,6 +467,16 @@ pub enum RulesCommand {
     Validate(RulesValidateArgs),
     /// Scan a value, file, or stdin with a local rule file
     Scan(RulesScanArgs),
+    /// Convert a local TOML rule file to YARA, marking anything not expressible
+    ExportYara(RulesPathArgs),
+    /// Convert a supported subset of YARA rules to Banshee TOML
+    ImportYara(RulesPathArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RulesPathArgs {
+    /// Input rule file
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Args)]

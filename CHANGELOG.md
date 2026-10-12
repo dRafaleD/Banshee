@@ -63,6 +63,14 @@ changes must be called out explicitly. Tags are immutable.
   sections, TLS callbacks and Rich checksum mismatches are flagged. Verified
   against pefile on 300 local Windows system binaries with identical imphash
   and TLS results.
+- `rules export-yara` and `rules import-yara` convert between Banshee TOML and
+  a documented YARA subset. Export maps literal/hex/regex strings, match
+  counts, `all`/`any` groups, file-type magic and entropy (`math`), and writes
+  explicit warnings for predicates YARA cannot express. Import accepts text,
+  plain hex and regex strings with `nocase`, string counts, `and`/`or`,
+  `any/all of them` and string sets, magic checks and entropy bounds; other
+  constructs are skipped with a per-rule reason, and the generated TOML is
+  validated before output. Example rules round-trip with identical matches.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule
