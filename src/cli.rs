@@ -597,6 +597,10 @@ pub struct ScanArgs {
     /// Maximum nested decoding layers per file
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(1..=32))]
     pub max_depth: u8,
+
+    /// Files analyzed concurrently (0 = available cores, at most 4); results stay in path order
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=64))]
+    pub jobs: u16,
 }
 
 #[derive(Debug, Args)]

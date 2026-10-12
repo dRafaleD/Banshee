@@ -763,6 +763,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     max_entries: args.max_entries,
                     max_depth: args.max_depth,
                     max_tokens: args.max_tokens,
+                    jobs: usize::from(args.jobs),
                 },
             )?;
             has_findings |= report.summary.total_findings > 0;

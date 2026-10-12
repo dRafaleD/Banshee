@@ -372,3 +372,43 @@ fn shortcut_reports_surface_hidden_arguments_and_their_indicators() {
     );
     assert!(url["first_line"].is_null());
 }
+
+#[test]
+fn parallel_scans_must_match_sequential_output_and_size_budget() {
+    let f = Fixture::new("parallel-scan");
+    for index in 0..24 {
+        let body = format!(
+            "file {index} http://host{index}.example.test/ {}\n",
+            "aGVsbG8gd29ybGQ=".repeat(index % 5 + 1)
+        );
+        std::fs::write(f.0.join(format!("sample-{index:02}.txt")), body).unwrap();
+    }
+    let scan = |jobs: &str| {
+        let output = Command::cargo_bin("banshee")
+            .unwrap()
+            .arg("scan")
+            .arg(&f.0)
+            .args([
+                "--format",
+                "json",
+                "--max-total-size",
+                "1500",
+                "--jobs",
+                jobs,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.code().is_some_and(|code| code <= 1),
+            "{output:?}"
+        );
+        output.stdout
+    };
+    let sequential = scan("1");
+    for jobs in ["2", "3", "8"] {
+        assert_eq!(scan(jobs), sequential, "--jobs {jobs} changed the report");
+    }
+    let report: serde_json::Value = serde_json::from_slice(&sequential).unwrap();
+    assert_eq!(report["summary"]["total_size_limit_reached"], true);
+    assert!(report["summary"]["bytes_analyzed"].as_u64().unwrap() <= 1500);
+}

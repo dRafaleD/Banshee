@@ -71,6 +71,10 @@ changes must be called out explicitly. Tags are immutable.
   `any/all of them` and string sets, magic checks and entropy bounds; other
   constructs are skipped with a per-rule reason, and the generated TOML is
   validated before output. Example rules round-trip with identical matches.
+- `scan --jobs N` analyzes files concurrently (default: available cores, at
+  most 4) without new dependencies. Results are written in path order, so
+  reports are byte-identical for any job count; 150 system DLLs scanned about
+  twice as fast with the default.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule
@@ -84,6 +88,10 @@ changes must be called out explicitly. Tags are immutable.
   unaffected.
 - `file_inspect` is split into archive, PE, ELF and shared byte-reader modules
   without behavior changes.
+- `scan` reserves the `--max-total-size` budget by each file's declared size in
+  path order, before analysis starts. A file that later fails to read still
+  counts against the budget, which keeps skip decisions independent of
+  concurrency.
 
 ### Fixed
 
