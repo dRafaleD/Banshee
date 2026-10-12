@@ -85,6 +85,8 @@ pub enum Command {
     Recipe(RecipeArgs),
     /// Follow appended log lines and analyze them locally
     Watch(WatchArgs),
+    /// Check the local installation offline (codecs, data, PATH, temp directory)
+    Doctor(DoctorArgs),
     /// Print the Banshee ASCII banner and mask emblem
     Banner(BannerArgs),
     /// Generate shell completion definitions
@@ -755,6 +757,13 @@ pub struct WatchArgs {
     /// Output format for each analyzed batch
     #[arg(long, value_enum, conflicts_with = "json")]
     pub format: Option<crate::output::OutputFormat>,
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

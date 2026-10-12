@@ -37,6 +37,14 @@ fn known_tlds() -> &'static HashSet<&'static str> {
     })
 }
 
+/// The `# Version ...` line of the embedded IANA snapshot.
+pub(crate) fn snapshot_version() -> Option<&'static str> {
+    IANA_TLDS
+        .lines()
+        .find_map(|line| line.strip_prefix("# Version "))
+        .map(str::trim)
+}
+
 /// Returns whether the final label of `domain` is a delegated or special-use TLD.
 pub(crate) fn has_known_tld(domain: &str) -> bool {
     domain

@@ -75,6 +75,10 @@ changes must be called out explicitly. Tags are immutable.
   most 4) without new dependencies. Results are written in path order, so
   reports are byte-identical for any job count; 150 system DLLs scanned about
   twice as fast with the default.
+- `banshee doctor` checks the installation offline: gzip/zlib, bzip2 and
+  liblzma round trips, decoder and rule-engine self-tests, the embedded TLD
+  snapshot version, a writable temporary directory and whether PATH resolves
+  to the running binary. Failed checks exit with status 2.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule

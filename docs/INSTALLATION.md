@@ -198,6 +198,11 @@ completion and manual locations to you.
 
 ## Troubleshooting
 
+Start with `banshee doctor` (or `banshee doctor --json`). It runs offline
+self-tests for the compression libraries (including liblzma), the decoder and
+rule engine, the embedded TLD snapshot, the temporary directory and PATH, and
+exits with status 2 when a check fails.
+
 | Symptom | Action |
 | --- | --- |
 | `cargo`, `rustc` or `pwsh` not found | Install the prerequisite and open a fresh terminal; verify the command resolves before retrying. |

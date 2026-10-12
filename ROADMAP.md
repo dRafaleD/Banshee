@@ -254,5 +254,4 @@ independent implementation work may run in parallel.
 
 These remain outside the committed sequence until the core phases are stable:
 
-- `banshee doctor` for local installation diagnostics;
 - expanded shell integration (PowerShell completion is already available).

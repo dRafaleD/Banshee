@@ -5,6 +5,7 @@ pub mod cert;
 pub mod cli;
 pub mod codec;
 pub mod diff;
+pub mod doctor;
 pub mod evidence;
 pub mod export;
 pub mod file_inspect;
@@ -943,6 +944,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(args.interval_ms));
             }
+        }
+        Command::Doctor(args) => {
+            let report = doctor::run();
+            has_operational_issues |= !report.healthy;
+            doctor::print(&report, args.json)?;
         }
         Command::Banner(args) => banner::print(args.compact, args.mask_only)?,
         Command::Completions(args) => {
