@@ -60,8 +60,11 @@ changes must be called out explicitly. Tags are immutable.
   now read with explicit limits; rule files, saved reports, evidence manifests
   and report inputs also stop reading if they grow past their checked size.
 - PEM chains are limited to 64 certificates.
-- Domain extraction no longer reports file names whose final label is a
-  common non-TLD file extension, such as `gate.php` or `payload.exe`.
+- Domains are validated against an embedded IANA TLD snapshot plus reserved
+  special-use names (`test`, `example`, `invalid`, `localhost`, `onion`, `alt`,
+  `internal`) and common private suffixes (`local`, `lan`, `corp`), so code
+  identifiers such as `System.Net.WebClient` and file names such as `gate.php`
+  are no longer reported. Refresh the snapshot with `scripts/update-tlds.sh`.
 
 ## 0.1.1 — 2026-09-09
 

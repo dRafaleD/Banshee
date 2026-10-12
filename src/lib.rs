@@ -20,6 +20,7 @@ mod report_html;
 pub mod rules;
 pub mod scan;
 pub mod timestamp;
+mod tld;
 pub mod watch;
 
 use anyhow::{Context, Result};

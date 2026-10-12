@@ -105,12 +105,17 @@ fn extract_domains(input: &str, findings: &mut Vec<Finding>) {
             .expect("valid regex")
     });
 
-    findings.extend(pattern.find_iter(input).map(|matched| Finding {
-        kind: FindingKind::Domain,
-        value: matched.as_str().to_ascii_lowercase(),
-        confidence: 0.9,
-        detail: None,
-    }));
+    findings.extend(
+        pattern
+            .find_iter(input)
+            .filter(|matched| crate::tld::has_known_tld(matched.as_str()))
+            .map(|matched| Finding {
+                kind: FindingKind::Domain,
+                value: matched.as_str().to_ascii_lowercase(),
+                confidence: 0.9,
+                detail: None,
+            }),
+    );
 }
 
 fn trim_punctuation(value: &str) -> &str {

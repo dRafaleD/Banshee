@@ -631,26 +631,12 @@ fn extract_domains(input: &str, iocs: &mut IocCollector) {
             break;
         }
         let domain = matched.as_str().to_ascii_lowercase();
-        if domain
-            .rsplit('.')
-            .next()
-            .is_some_and(|label| NON_TLD_FILE_EXTENSIONS.contains(&label))
-        {
+        if !crate::tld::has_known_tld(&domain) {
             continue;
         }
         iocs.record(matched.start(), IocKind::Domain, domain, None);
     }
 }
-
-/// File extensions that are not delegated top-level domains, so `gate.php` or
-/// `payload.exe` are file names rather than hosts. Extensions that are also
-/// real TLDs (for example `.py`, `.sh`, `.zip`) are intentionally absent.
-const NON_TLD_FILE_EXTENSIONS: &[&str] = &[
-    "asp", "aspx", "bak", "bat", "bin", "cfg", "cgi", "cmd", "conf", "css", "csv", "dat", "dll",
-    "doc", "docm", "docx", "exe", "gif", "gz", "hta", "htm", "html", "ini", "jar", "jpeg", "jpg",
-    "js", "json", "jsp", "lnk", "log", "msi", "php", "png", "ps1", "rar", "scr", "sys", "tmp",
-    "txt", "vbs", "xls", "xlsm", "xlsx", "xml", "yaml", "yml",
-];
 
 struct SecretPatterns {
     cloud_access_key: Regex,
@@ -930,7 +916,7 @@ mod tests {
     #[test]
     fn file_names_with_non_tld_extensions_are_not_domains() {
         let report = extract(
-            "GET /gate.php and payload.exe, but tool.py and example.test are hosts",
+            "GET /gate.php, payload.exe and System.Net.WebClient, but tool.py and example.test are hosts",
             ExtractOptions::default(),
         );
         let domains = report
