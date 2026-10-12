@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: dRafaleD.Banshee
+PackageVersion: @VERSION@
+PackageLocale: en-US
+Publisher: dRafaleD
+PublisherUrl: https://github.com/dRafaleD
+PackageName: Banshee
+PackageUrl: https://github.com/dRafaleD/Banshee
+License: MIT
+LicenseUrl: https://github.com/dRafaleD/Banshee/blob/master/LICENSE
+ShortDescription: Offline, pipe-friendly security analysis toolkit
+Description: Decode nested content, extract and normalize indicators, inspect PE/ELF, Office, PDF and LNK files, apply local rules and keep verifiable evidence bundles, all without uploading inputs.
+Tags:
+  - security
+  - forensics
+  - malware-analysis
+  - ioc
+  - cli
+ReleaseNotesUrl: https://github.com/dRafaleD/Banshee/blob/master/docs/releases/v@VERSION@.md
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

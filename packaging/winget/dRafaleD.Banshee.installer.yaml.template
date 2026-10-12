@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: dRafaleD.Banshee
+PackageVersion: @VERSION@
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: banshee-@VERSION@-x86_64-pc-windows-msvc\banshee.exe
+    PortableCommandAlias: banshee
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/dRafaleD/Banshee/releases/download/v@VERSION@/banshee-@VERSION@-x86_64-pc-windows-msvc.zip
+    InstallerSha256: @SHA256UPPER_x86_64-pc-windows-msvc@
+ManifestType: installer
+ManifestVersion: 1.6.0

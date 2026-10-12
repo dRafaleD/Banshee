@@ -4,6 +4,24 @@ version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Offline, pipe-friendly security analysis toolkit"
+license = "MIT"
+repository = "https://github.com/dRafaleD/Banshee"
+readme = "README.md"
+keywords = ["security", "forensics", "ioc", "malware-analysis", "cli"]
+categories = ["command-line-utilities", "encoding", "parser-implementations"]
+# Keep the published crate to source, docs and examples; images, fuzzing and
+# release outputs stay in the repository.
+include = [
+    "/src/**",
+    "/examples/**",
+    "/tests/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/SECURITY.md",
+]
 
 [[bin]]
 name = "banshee"
@@ -40,6 +58,15 @@ zip = { version = "7.2", default-features = false, features = ["deflate"] }
 assert_cmd = "2.0"
 predicates = "3.1"
 rcgen = "0.14"
+
+# Prebuilt archives from the release workflow, for `cargo binstall banshee`.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
+bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
 
 [profile.release]
 lto = "thin"

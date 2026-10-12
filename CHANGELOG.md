@@ -79,6 +79,10 @@ changes must be called out explicitly. Tags are immutable.
   liblzma round trips, decoder and rule-engine self-tests, the embedded TLD
   snapshot version, a writable temporary directory and whether PATH resolves
   to the running binary. Failed checks exit with status 2.
+- Distribution preparation: crates.io metadata with an explicit file list,
+  cargo-binstall metadata for release archives, and Scoop, Homebrew and winget
+  templates filled from verified checksums by `scripts/render-packaging.ps1`.
+  Nothing is published automatically.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule

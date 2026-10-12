@@ -36,6 +36,24 @@ The original v0.1.0 tag predates them and cannot use this
 pipeline; use a new version for the first packaged release. Existing releases are
 not overwritten automatically; inspect any partial draft before retrying.
 
+## Distribution channels
+
+None of these steps run automatically; each is a reviewed, manual action taken
+only after the GitHub Release is published and its checksums are verified.
+
+- **crates.io**: `cargo package --locked` must pass locally (it builds the
+  packaged crate without uploading). Publishing with `cargo publish` is an
+  irreversible public action for that version number.
+- **cargo-binstall**: `[package.metadata.binstall]` in Cargo.toml points at the
+  release archives, so `cargo binstall banshee` works once a release exists.
+- **Scoop, Homebrew and winget**: download the release archives and `.sha256`
+  sidecars into `dist/`, then run
+  `pwsh -File scripts/render-packaging.ps1 -Version VERSION`. It verifies each
+  sidecar (and the archive when present), fills the templates in `packaging/`
+  and writes the results to `dist/packaging/`. Review them and submit them to a
+  bucket, tap or the winget-pkgs repository by hand. A manifest is skipped when
+  a platform it needs has no verified checksum.
+
 ## Verify downloads
 
 On Linux, download the archive and matching sidecar into the same directory:
