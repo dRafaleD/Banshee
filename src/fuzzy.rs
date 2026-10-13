@@ -246,9 +246,7 @@ fn edit_distance(left: &[u8], right: &[u8]) -> u64 {
 }
 
 fn score_strings(left: &[u8], right: &[u8], block_size: u64) -> u64 {
-    if left.len() > SPAMSUM_LENGTH || right.len() > SPAMSUM_LENGTH {
-        return 0;
-    }
+    // `parse` already rejects parts longer than SPAMSUM_LENGTH.
     if !has_common_substring(left, right) {
         return 0;
     }
@@ -299,7 +297,7 @@ pub fn compare(left: &str, right: &str) -> Result<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compare, eliminate_sequences, ssdeep};
+    use super::{compare, edit_distance, eliminate_sequences, has_common_substring, ssdeep};
 
     fn sample(seed: u64, length: usize) -> Vec<u8> {
         let mut state = seed;
@@ -349,5 +347,144 @@ mod tests {
             compare("3:abcdefgh:ij,\"a.bin\"", "3:abcdefgh:ij").expect("compare"),
             100
         );
+    }
+
+    fn golden_input(seed: u64, length: usize, text: bool, zero_tail: usize) -> Vec<u8> {
+        let mut state = seed;
+        let mut data = (0..length)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                if text {
+                    b"abcdefghij klmnopqrstuvwxyz\n0123456789"[(state % 38) as usize]
+                } else {
+                    (state >> 24) as u8
+                }
+            })
+            .collect::<Vec<_>>();
+        data.extend(std::iter::repeat_n(0, zero_tail));
+        data
+    }
+
+    #[test]
+    fn digests_match_independently_checked_vectors() {
+        // Each digest was produced identically by an independent ssdeep
+        // implementation. Zero tails exercise the stored-tail branch.
+        let vectors = [
+            (1, 7, true, 0, "3:qQ:qQ"),
+            (2, 64, true, 0, "3:8UOPFF+LulGwuOvJpy7Xn:WFFDPhoT"),
+            (
+                3,
+                193,
+                false,
+                0,
+                "3:yZsvNkbRrK5mbA8t9ACST3vcN2u63oMrBH1B84JfuHpxCbUvl0ecJPoDwtjSKROZ:yaorK5d2EjEvmnNHIX0bQuecpnmZ",
+            ),
+            (
+                4,
+                4096,
+                true,
+                0,
+                "96:bk1WgNqsZPiMX7VurbMbKzGbEqDY7q8B80pu/tDlqIl:buWgBZKMUDzGgF9ZulIC",
+            ),
+            (
+                5,
+                4096,
+                false,
+                64,
+                "96:ppa+jHXiBnN3le/jg0wkTw3oShp0DoYS7djmBhi3EZ:ppa1VG/okEYE8HY0rzZ",
+            ),
+            (
+                6,
+                100_000,
+                true,
+                0,
+                "3072:08bDzykp8WNR0Qf81CogLhHZg3HVK60WLDm9/:08bHNp7z0QOgXMHVK6dmZ",
+            ),
+            (
+                7,
+                100_000,
+                false,
+                4096,
+                "1536:VCGSHOqjIagp+7WRvYnm0SnRVYomKymNyOZgKV0kq0ykcFWv0OvFXOs2:NqjwTRvmm0SnRVrJwOZV0dFOvFeB",
+            ),
+            (
+                8,
+                1 << 20,
+                false,
+                0,
+                "24576:69FQ4OQlSdmWQ33nCIu0v0M+m5jyayUAsarhjAegwMgCQv0U2an++TL0SR:X4OmSdmWQ/x+m5jkUcNLMgiIDTL0SR",
+            ),
+            (
+                9,
+                300_000,
+                true,
+                16,
+                "6144:+qQl24oFS3PqQvRCy/0W0OkWT5DIrt6kCUcmACqUJuRyOpOH:+qQoQSa/slYDIgktqUJuRyOp6",
+            ),
+        ];
+        for (seed, length, text, zero_tail, expected) in vectors {
+            assert_eq!(
+                ssdeep(&golden_input(seed, length, text, zero_tail)),
+                expected,
+                "vector {seed}"
+            );
+        }
+    }
+
+    #[test]
+    fn scores_follow_the_ssdeep_formula() {
+        // Same block size, one substitution in 12 characters: distance 2,
+        // 2 * 64 / 24 = 5, 100 * 5 / 64 = 7, so the score is 93.
+        assert_eq!(
+            compare("48:ABCDEFGHIJKL:z", "48:ABCDEFGHIJKM:z").unwrap(),
+            93
+        );
+        // Below block size 45 the score is capped at size / 3 * shortest length.
+        assert_eq!(
+            compare("12:ABCDEFGHIJKL:z", "12:ABCDEFGHIJKM:z").unwrap(),
+            48
+        );
+        // Identical first parts score 100 even when the raw digests differ.
+        assert_eq!(
+            compare("48:ABCDEFGHIJK:zz", "48:ABCDEFGHIJK:yy").unwrap(),
+            100
+        );
+        // Runs longer than three characters are collapsed before scoring.
+        assert_eq!(
+            compare("48:AAAAAAABCDEFGH:z", "48:AAABCDEFGH:z").unwrap(),
+            100
+        );
+        // Adjacent block sizes compare the double-size part with the other
+        // first part, in both directions; 6 / 3 * 9 caps the score at 18.
+        assert_eq!(
+            compare("3:ABCDEFGHIJ:KLMNOPQRS", "6:KLMNOPQRS:xyz").unwrap(),
+            18
+        );
+        assert_eq!(
+            compare("6:KLMNOPQRS:xyz", "3:ABCDEFGHIJ:KLMNOPQRS").unwrap(),
+            18
+        );
+        // Without a shared 7-character run the score is 0.
+        assert_eq!(
+            compare("48:ABCDEFxxxxxx:z", "48:ABCDEFyyyyyy:z").unwrap(),
+            0
+        );
+        // Parts longer than 64 characters are not valid digests.
+        let long = "BCDEFGHIJ".repeat(8);
+        assert!(compare(&format!("48:{long}:z"), "48:BCDEFGHIJ:z").is_err());
+    }
+
+    #[test]
+    fn edit_distance_weights_substitutions_twice() {
+        assert_eq!(edit_distance(b"kitten", b"sitting"), 5);
+        assert_eq!(edit_distance(b"", b"abc"), 3);
+        assert_eq!(edit_distance(b"abc", b""), 3);
+        assert_eq!(edit_distance(b"abc", b"abc"), 0);
+        assert_eq!(edit_distance(b"abc", b"abd"), 2);
+        assert!(has_common_substring(b"ABCDEFG", b"xxABCDEFGyy"));
+        assert!(!has_common_substring(b"ABCDEF", b"xxABCDEFyy"));
+        assert!(!has_common_substring(b"ABCDEFG", b"ABCDEFx"));
     }
 }

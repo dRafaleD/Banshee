@@ -269,6 +269,10 @@ fn recover_xor(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>, f32)> {
         else {
             continue;
         };
+        // An all-zero key would mean the payload is already plain text.
+        if key.iter().all(|byte| *byte == 0) {
+            continue;
+        }
         let decoded = bytes
             .iter()
             .zip(key.iter().cycle())
@@ -339,4 +343,102 @@ fn decompress(bytes: &[u8], kind: EncodingKind) -> Option<Vec<u8>> {
         return None;
     }
     Some(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BinaryTransforms, EncodingKind, MAX_XOR_BYTES, decode_binary, decode_url, decode_utf16le,
+        encoded_payload_confidence, recover_xor,
+    };
+
+    fn xor(data: &[u8], key: &[u8]) -> Vec<u8> {
+        data.iter()
+            .zip(key.iter().cycle())
+            .map(|(byte, key)| byte ^ key)
+            .collect()
+    }
+
+    fn text(length: usize) -> Vec<u8> {
+        b"the quick brown fox jumps over the lazy dog 0123456789 "
+            .iter()
+            .copied()
+            .cycle()
+            .take(length)
+            .collect()
+    }
+
+    fn utf16(value: &str) -> Vec<u8> {
+        value.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn url_decoding_handles_plus_escapes_and_truncated_percent() {
+        assert_eq!(decode_url("%41%42+c").as_deref(), Some("AB c"));
+        // A percent sign without two following characters stays literal.
+        assert_eq!(decode_url("100%").as_deref(), Some("100%"));
+        assert_eq!(decode_url("ab%4").as_deref(), Some("ab%4"));
+        assert_eq!(decode_url("%zz"), None);
+    }
+
+    #[test]
+    fn plain_text_payloads_never_gain_an_xor_layer() {
+        // A zero key would "decode" text to itself; it must never be reported.
+        assert!(recover_xor(&text(64)).is_none());
+        let decoded = decode_binary(text(64), BinaryTransforms::EncodedPayload).expect("text");
+        assert!(decoded.compression_layers.is_empty());
+        assert_eq!(encoded_payload_confidence(&text(64)), None);
+    }
+
+    #[test]
+    fn xor_limits_and_confidence_are_enforced() {
+        let plain = text(2_000);
+        // Above 1 KiB but within the 64 KiB and 16 KiB limits.
+        let (key, decoded, score) = recover_xor(&xor(&plain, &[0xa5])).expect("single byte");
+        assert_eq!((key, decoded.as_slice()), (vec![0xa5], plain.as_slice()));
+        assert!(score >= 0.75);
+        let (key, decoded, _) = recover_xor(&xor(&plain, &[0x9c, 0x31, 0xe7])).expect("repeating");
+        assert_eq!(
+            (key, decoded.as_slice()),
+            (vec![0x9c, 0x31, 0xe7], plain.as_slice())
+        );
+        // Repeating keys are only searched up to 16 KiB; single bytes up to 64 KiB.
+        let large = text(20_000);
+        assert!(recover_xor(&xor(&large, &[0x9c, 0x31, 0xe7])).is_none());
+        assert!(recover_xor(&xor(&large, &[0xa5])).is_some());
+        assert!(recover_xor(&xor(&text(MAX_XOR_BYTES + 1), &[0xa5])).is_none());
+
+        let confidence = encoded_payload_confidence(&xor(&plain, &[0xa5])).expect("xor");
+        assert!((0.725..=0.8).contains(&confidence), "{confidence}");
+    }
+
+    #[test]
+    fn utf16_detection_uses_a_90_percent_threshold_and_even_lengths() {
+        assert_eq!(
+            decode_utf16le(&utf16("abcdefghi\u{11f}")).as_deref(),
+            Some("abcdefghi\u{11f}")
+        );
+        assert_eq!(decode_utf16le(&utf16("abcdefgh\u{11f}\u{11f}")), None);
+        let mut odd = utf16("abcdef");
+        odd.push(b'x');
+        assert_eq!(decode_utf16le(&odd), None);
+        assert_eq!(decode_utf16le(&utf16("a")), None);
+        assert_eq!(decode_utf16le(&utf16("ab")).as_deref(), Some("ab"));
+        assert_eq!(
+            encoded_payload_confidence(&utf16("hello world")),
+            Some(0.95)
+        );
+    }
+
+    #[test]
+    fn compression_payloads_are_detected_with_high_confidence() {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(b"compressed text").expect("write");
+        let gzip = encoder.finish().expect("finish");
+        assert_eq!(encoded_payload_confidence(&gzip), Some(0.99));
+        let decoded = decode_binary(gzip, BinaryTransforms::CompressionOnly).expect("gzip");
+        assert_eq!(decoded.output, "compressed text");
+        assert_eq!(decoded.compression_layers[0].kind, EncodingKind::Gzip);
+    }
 }

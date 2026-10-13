@@ -528,4 +528,157 @@ mod tests {
         assert_eq!(csv_field("=HYPERLINK(1)"), "'=HYPERLINK(1)");
         assert_eq!(csv_field("@SUM(A1)"), "'@SUM(A1)");
     }
+
+    fn sample_report() -> serde_json::Value {
+        json!({
+            "file": { "path": "/cases/sample.bin" },
+            "hashes": {
+                "md5": "d41d8cd98f00b204e9800998ecf8427e",
+                "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            "content_analysis": { "report": { "iocs": { "iocs": [
+                { "kind": "url", "value": "http://b.example.test/", "redacted": false, "occurrences": 2 },
+                { "kind": "domain", "value": "a.example.test", "redacted": false, "occurrences": 1 },
+                { "kind": "domain", "value": "a.example.test", "redacted": false, "occurrences": 1 },
+                { "kind": "ipv4", "value": "192.0.2.1", "redacted": false },
+                { "kind": "hash", "value": "0123456789abcdef0123456789abcdef", "redacted": false },
+                { "kind": "hash", "value": "0123456789abcdef", "redacted": false },
+                { "kind": "secret", "value": "AKIA…CDEF [REDACTED]", "redacted": true },
+                { "kind": "private_key", "value": "-----BEGIN", "redacted": false },
+                { "kind": "url", "value": "http://masked.example.test/", "redacted": true },
+                { "kind": "mac", "value": "00:11:22:33:44:55", "redacted": false }
+            ] } } }
+        })
+    }
+
+    #[test]
+    fn collect_skips_secrets_and_unsupported_values_and_deduplicates() {
+        let data = super::collect(&sample_report()).expect("collect");
+        assert_eq!(data.sample.name, "sample.bin");
+        assert_eq!(data.summary.skipped_redacted, 3);
+        assert_eq!(data.summary.skipped_unsupported, 1);
+        let values = data
+            .observables
+            .iter()
+            .map(|observable| {
+                (
+                    observable.kind.csv_type(),
+                    observable.value.as_str(),
+                    observable.occurrences,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                ("domain", "a.example.test", 1),
+                ("ipv4", "192.0.2.1", 1),
+                ("mac", "00:11:22:33:44:55", 1),
+                ("url", "http://b.example.test/", 2),
+                ("md5", "0123456789abcdef0123456789abcdef", 1),
+            ]
+        );
+        assert_eq!(data.summary.exported, 5);
+        assert!(super::collect(&json!({ "file": {} })).is_err());
+    }
+
+    #[test]
+    fn stix_bundle_groups_observables_without_indicators() {
+        let data = super::collect(&sample_report()).expect("collect");
+        let bundle = super::stix_bundle(&data, "2026-10-13T00:00:00.000Z");
+        let objects = bundle["objects"].as_array().expect("objects");
+        let types = objects
+            .iter()
+            .map(|object| object["type"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            types,
+            [
+                "file",
+                "domain-name",
+                "ipv4-addr",
+                "mac-addr",
+                "url",
+                "file",
+                "grouping"
+            ]
+        );
+        let grouping = objects.last().unwrap();
+        assert_eq!(grouping["context"], "unspecified");
+        assert_eq!(grouping["created"], "2026-10-13T00:00:00.000Z");
+        assert_eq!(grouping["object_refs"].as_array().unwrap().len(), 6);
+        assert_eq!(objects[0]["name"], "sample.bin");
+        assert_eq!(
+            objects[5]["hashes"]["MD5"],
+            "0123456789abcdef0123456789abcdef"
+        );
+        assert!(bundle["id"].as_str().unwrap().starts_with("bundle--"));
+        // Deterministic identifiers: the same input yields the same bundle id.
+        assert_eq!(super::stix_bundle(&data, "x")["id"], bundle["id"]);
+    }
+
+    #[test]
+    fn misp_event_maps_types_and_never_marks_ids() {
+        let data = super::collect(&sample_report()).expect("collect");
+        let now = time::OffsetDateTime::from_unix_timestamp(1791892800).expect("timestamp");
+        let event = super::misp_event(&data, now);
+        assert_eq!(event["Event"]["date"], "2026-10-13");
+        assert_eq!(event["Event"]["info"], "Banshee triage: sample.bin");
+        let attributes = event["Event"]["Attribute"].as_array().unwrap();
+        let summary = attributes
+            .iter()
+            .map(|attribute| {
+                assert_eq!(attribute["to_ids"], false);
+                (
+                    attribute["type"].as_str().unwrap(),
+                    attribute["category"].as_str().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            summary,
+            [
+                ("filename|md5", "Payload delivery"),
+                ("filename|sha1", "Payload delivery"),
+                ("filename|sha256", "Payload delivery"),
+                ("domain", "Network activity"),
+                ("ip-dst", "Network activity"),
+                ("mac-address", "Network activity"),
+                ("url", "Network activity"),
+                ("md5", "Payload delivery"),
+            ]
+        );
+        assert_eq!(
+            attributes[0]["value"],
+            "sample.bin|d41d8cd98f00b204e9800998ecf8427e"
+        );
+    }
+
+    #[test]
+    fn csv_lists_sample_hashes_then_observables() {
+        let data = super::collect(&sample_report()).expect("collect");
+        let mut output = Vec::new();
+        super::write_csv(&mut output, &data).expect("csv");
+        let csv = String::from_utf8(output).unwrap();
+        let lines = csv.lines().collect::<Vec<_>>();
+        assert_eq!(lines[0], "type,value,occurrences,source");
+        assert_eq!(
+            lines[1],
+            "sample_md5,d41d8cd98f00b204e9800998ecf8427e,1,sample.bin"
+        );
+        assert_eq!(lines[7], "url,http://b.example.test/,2,sample.bin");
+        assert_eq!(lines.len(), 9);
+    }
+
+    #[test]
+    fn timestamps_are_utc_with_milliseconds() {
+        let timestamp = super::now_timestamp().expect("timestamp");
+        assert!(timestamp.ends_with('Z'), "{timestamp}");
+        assert_eq!(
+            timestamp.len(),
+            "2026-10-13T00:00:00.000Z".len(),
+            "{timestamp}"
+        );
+    }
 }
