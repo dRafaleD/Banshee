@@ -76,5 +76,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "yara_import"
+path = "fuzz_targets/yara_import.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]

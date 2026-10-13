@@ -208,3 +208,13 @@ fn example_rules_round_trip_with_metadata_and_compound_conditions() {
         assert_eq!(ids(&left), ids(&right));
     }
 }
+
+#[test]
+fn conditions_with_multibyte_text_do_not_panic() {
+    // Minimized from the yara_import fuzz target.
+    for condition in ["é and $a", "$a and é", "($a or ü) and $a", "$a ané $a"] {
+        let yara = format!("rule R {{ strings: $a = \"x\" condition: {condition} }}");
+        let conversion = import_source(&yara).expect("import");
+        assert_eq!(conversion.converted + conversion.skipped.len(), 1);
+    }
+}

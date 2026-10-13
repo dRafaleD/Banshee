@@ -18,6 +18,14 @@ use super::{
     parse_hex_pattern,
 };
 
+/// Compiles a regular expression once and reuses it for every rule.
+macro_rules! regex {
+    ($pattern:expr) => {{
+        static CELL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        CELL.get_or_init(|| regex::Regex::new($pattern).expect("valid built-in regex"))
+    }};
+}
+
 const MAX_YARA_FILE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -442,10 +450,9 @@ fn strip_comments(source: &str) -> String {
 }
 
 fn rule_blocks(source: &str) -> Result<Vec<RuleBlock>> {
-    let header = regex::Regex::new(
-        r"(?m)^\s*(?:(?:private|global)\s+)*rule\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([A-Za-z0-9_\s]+?))?\s*\{",
-    )
-    .expect("valid rule header regex");
+    let header = regex!(
+        r"(?m)^\s*(?:(?:private|global)\s+)*rule\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([A-Za-z0-9_\s]+?))?\s*\{"
+    );
     let mut blocks = Vec::new();
     for captures in header.captures_iter(source) {
         let whole = captures.get(0).expect("whole match");
@@ -502,9 +509,12 @@ fn rule_blocks(source: &str) -> Result<Vec<RuleBlock>> {
 fn sections(body: &str) -> Result<BTreeMap<&'static str, String>> {
     let mut found = Vec::new();
     let mut cursor = 0;
-    for name in ["meta", "strings", "condition"] {
-        let marker =
-            regex::Regex::new(&format!(r"(?:^|\s){name}\s*:")).expect("valid section regex");
+    let markers = [
+        ("meta", regex!(r"(?:^|\s)meta\s*:")),
+        ("strings", regex!(r"(?:^|\s)strings\s*:")),
+        ("condition", regex!(r"(?:^|\s)condition\s*:")),
+    ];
+    for (name, marker) in markers {
         if let Some(matched) = marker.find(&body[cursor..]) {
             found.push((name, cursor + matched.start(), cursor + matched.end()));
             cursor += matched.end();
@@ -630,8 +640,7 @@ fn import_rule(block: &RuleBlock) -> Result<String> {
 
 /// Meta values keyed by lowercase identifier; repeated keys keep each value.
 fn parse_meta(section: &str) -> Vec<(String, String)> {
-    let line = regex::Regex::new(r#"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)""#)
-        .expect("valid meta regex");
+    let line = regex!(r#"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)""#);
     line.captures_iter(section)
         .map(|captures| {
             (
@@ -652,10 +661,9 @@ fn meta_value<'a>(meta: &'a [(String, String)], key: &str) -> Option<&'a String>
 }
 
 fn parse_strings(section: &str) -> Result<Vec<(String, YaraString)>> {
-    let definition = regex::Regex::new(
-        r#"(?s)\$([A-Za-z0-9_]*)\s*=\s*("(?:[^"\\]|\\.)*"|\{[^}]*\}|/(?:[^/\\\n]|\\.)*/[is]*)([^$]*)"#,
-    )
-    .expect("valid string regex");
+    let definition = regex!(
+        r#"(?s)\$([A-Za-z0-9_]*)\s*=\s*("(?:[^"\\]|\\.)*"|\{[^}]*\}|/(?:[^/\\\n]|\\.)*/[is]*)([^$]*)"#
+    );
     let mut strings = Vec::new();
     for captures in definition.captures_iter(section) {
         let name = captures[1].to_owned();
@@ -772,11 +780,9 @@ fn plan_condition(condition: &str, strings: &[(String, YaraString)]) -> Result<C
     let mut min_matches = 1;
     let mut file_types = Vec::new();
     let (mut min_entropy, mut max_entropy) = (None, None);
-    let count = regex::Regex::new(r"^#([A-Za-z0-9_]*) (>=|>) (\d+)$").expect("valid count regex");
-    let set = regex::Regex::new(r"^(any|all) of \(([^)]*)\)$").expect("valid string set regex");
-    let entropy =
-        regex::Regex::new(r"^math\.entropy\(0, ?filesize\) (>=|<=) ([0-9]+(?:\.[0-9]+)?)$")
-            .expect("valid entropy regex");
+    let count = regex!(r"^#([A-Za-z0-9_]*) (>=|>) (\d+)$");
+    let set = regex!(r"^(any|all) of \(([^)]*)\)$");
+    let entropy = regex!(r"^math\.entropy\(0, ?filesize\) (>=|<=) ([0-9]+(?:\.[0-9]+)?)$");
     // `($a, $b*)` selects named strings and prefixes, as in YARA string sets.
     let select = |list: &str| -> Result<Vec<YaraString>> {
         let mut selected = Vec::new();
@@ -799,7 +805,7 @@ fn plan_condition(condition: &str, strings: &[(String, YaraString)]) -> Result<C
         }
         Ok(selected)
     };
-    let identifier = regex::Regex::new(r"^\$([A-Za-z0-9_]*)$").expect("valid identifier regex");
+    let identifier = regex!(r"^\$([A-Za-z0-9_]*)$");
 
     for term in split_top_level(&normalized, " and ") {
         let term = strip_parentheses(term);
@@ -930,7 +936,9 @@ fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
         match bytes[index] {
             b'(' => depth += 1,
             b')' => depth -= 1,
-            _ if depth == 0 && text[index..].starts_with(separator) => {
+            // Compare bytes: `index` may sit inside a multi-byte character, and
+            // an ASCII separator match always starts on a character boundary.
+            _ if depth == 0 && bytes[index..].starts_with(separator.as_bytes()) => {
                 parts.push(text[start..index].trim());
                 index += separator.len();
                 start = index;

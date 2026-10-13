@@ -112,6 +112,9 @@ changes must be called out explicitly. Tags are immutable.
   now read with explicit limits; rule files, saved reports, evidence manifests
   and report inputs also stop reading if they grow past their checked size.
 - PEM chains are limited to 64 certificates.
+- YARA import no longer panics on conditions containing multi-byte text
+  (found by the new `yara_import` fuzz target), and compiles its parsing
+  expressions once instead of per rule.
 - Domains are validated against an embedded IANA TLD snapshot plus reserved
   special-use names (`test`, `example`, `invalid`, `localhost`, `onion`, `alt`,
   `internal`) and common private suffixes (`local`, `lan`, `corp`), so code
