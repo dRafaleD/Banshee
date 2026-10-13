@@ -254,4 +254,5 @@ independent implementation work may run in parallel.
 
 These remain outside the committed sequence until the core phases are stable:
 
-- expanded shell integration (PowerShell completion is already available).
+- expanded shell integration (PowerShell completion is already available);
+- additional browser-build features such as evidence bundles and diffs.

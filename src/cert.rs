@@ -5,6 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use x509_parser::certificate::X509Certificate;
+#[cfg(feature = "crypto-verify")]
 use x509_parser::error::X509Error;
 use x509_parser::extensions::GeneralName;
 use x509_parser::parse_x509_certificate;
@@ -283,11 +284,20 @@ fn verify_signature(
     certificate: &X509Certificate<'_>,
     issuer: Option<&X509Certificate<'_>>,
 ) -> SignatureStatus {
-    let issuer_key = issuer.map(|certificate| certificate.public_key());
-    match certificate.verify_signature(issuer_key) {
-        Ok(()) => SignatureStatus::Valid,
-        Err(X509Error::SignatureUnsupportedAlgorithm) => SignatureStatus::Unsupported,
-        Err(_) => SignatureStatus::Invalid,
+    #[cfg(feature = "crypto-verify")]
+    {
+        let issuer_key = issuer.map(|certificate| certificate.public_key());
+        match certificate.verify_signature(issuer_key) {
+            Ok(()) => SignatureStatus::Valid,
+            Err(X509Error::SignatureUnsupportedAlgorithm) => SignatureStatus::Unsupported,
+            Err(_) => SignatureStatus::Invalid,
+        }
+    }
+    // Builds without signature support never claim a valid or invalid chain.
+    #[cfg(not(feature = "crypto-verify"))]
+    {
+        let _ = (certificate, issuer);
+        SignatureStatus::Unsupported
     }
 }
 

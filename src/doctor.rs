@@ -51,7 +51,28 @@ pub fn run() -> DoctorReport {
         },
         check("gzip and zlib", check_deflate),
         check("bzip2", check_bzip2),
-        check("xz (liblzma)", check_xz),
+        if cfg!(feature = "xz") {
+            check("xz (liblzma)", check_xz)
+        } else {
+            Check {
+                name: "xz (liblzma)",
+                status: CheckStatus::Warn,
+                detail: "not built in; XZ payloads are identified but not decompressed".to_owned(),
+            }
+        },
+        Check {
+            name: "signature verification",
+            status: if cfg!(feature = "crypto-verify") {
+                CheckStatus::Ok
+            } else {
+                CheckStatus::Warn
+            },
+            detail: if cfg!(feature = "crypto-verify") {
+                "JWT and X.509 signature verification available".to_owned()
+            } else {
+                "not built in; jwt verify fails and chain signatures report unsupported".to_owned()
+            },
+        },
         check("decoder self-test", check_decoder),
         check("rule engine", check_rules),
         check("TLD snapshot", check_tlds),
@@ -149,6 +170,12 @@ fn check_bzip2() -> Result<String> {
     )
 }
 
+#[cfg(not(feature = "xz"))]
+fn check_xz() -> Result<String> {
+    bail!("xz support is not built in")
+}
+
+#[cfg(feature = "xz")]
 fn check_xz() -> Result<String> {
     round_trip(
         "xz",

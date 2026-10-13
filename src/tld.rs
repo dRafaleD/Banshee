@@ -56,7 +56,7 @@ pub(crate) fn has_known_tld(domain: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{IANA_TLDS, has_known_tld, known_tlds};
+    use super::{IANA_TLDS, has_known_tld, known_tlds, snapshot_version};
 
     #[test]
     fn snapshot_is_versioned_and_complete() {
@@ -66,7 +66,19 @@ mod tests {
                 .nth(1)
                 .is_some_and(|line| line.starts_with("# Version "))
         );
+        // The version is the IANA serial (YYYYMMDDNN) followed by a timestamp.
+        let version = snapshot_version().expect("version line");
+        assert!(
+            version.len() > 10 && version[..10].bytes().all(|byte| byte.is_ascii_digit()),
+            "{version}"
+        );
         assert!(known_tlds().len() > 1_000);
+        // Header comments and blank lines must never become TLD entries.
+        assert!(
+            known_tlds()
+                .iter()
+                .all(|tld| !tld.is_empty() && !tld.starts_with('#') && !tld.contains(' ')),
+        );
         assert!(
             IANA_TLDS
                 .lines()

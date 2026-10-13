@@ -163,6 +163,17 @@ The initial foundation includes the following commands:
 - Accepts a positional value, a file, or stdin.
 - Supports human-readable, JSON, JSONL, and CSV output for extraction, bulk analysis, and log watching.
 
+## Browser build
+
+`pwsh -File scripts/build-web.ps1` (after `rustup target add
+wasm32-unknown-unknown`) writes `dist/web/banshee.html`: one self-contained
+page that analyzes a dropped file or decodes a value inside the browser tab.
+The embedded WebAssembly module imports no browser functions, and the page's
+Content-Security-Policy (`default-src 'none'`) blocks every network request, so
+inputs cannot be uploaded. Reports open in a sandboxed frame without scripts.
+The browser build omits XZ decompression and JWT/X.509 signature checks, which
+need native libraries; use the command-line tool for those.
+
 ## Build
 
 ### Requirements

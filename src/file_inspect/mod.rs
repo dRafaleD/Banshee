@@ -6,6 +6,7 @@ use bzip2::read::MultiBzDecoder;
 use flate2::read::MultiGzDecoder;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+#[cfg(feature = "xz")]
 use xz2::read::XzDecoder;
 
 mod archive;
@@ -204,7 +205,13 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
             &mut report,
         )?;
     } else if bytes.starts_with(&[0xFD, b'7', b'z', b'X', b'Z', 0x00]) {
+        #[cfg(feature = "xz")]
         inspect_compressed(bytes, "XZ", XzDecoder::new(bytes), max_entries, &mut report)?;
+        #[cfg(not(feature = "xz"))]
+        {
+            report.format =
+                "XZ compressed data (decompression not available in this build)".to_owned();
+        }
     } else if bytes.starts_with(b"BZh") {
         inspect_compressed(
             bytes,
@@ -310,6 +317,7 @@ mod tests {
 
     use bzip2::Compression as BzipCompression;
     use bzip2::write::BzEncoder;
+    #[cfg(feature = "xz")]
     use xz2::write::XzEncoder;
     use zip::write::SimpleFileOptions;
 
@@ -349,6 +357,7 @@ mod tests {
         assert!(format!("{error:#}").contains("64 MiB safety limit"));
     }
 
+    #[cfg(feature = "xz")]
     #[test]
     fn synthetic_parser_mutations_and_truncations_do_not_panic() {
         let tar = tar_fixture();
@@ -390,6 +399,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "xz")]
     fn assert_parser_bounds(bytes: &[u8], name: &str) {
         if let Ok(report) = inspect_bytes(bytes, name.into(), 2) {
             assert_eq!(report.size, bytes.len());
@@ -727,6 +737,7 @@ mod tests {
         assert_eq!(archive.entries[0].size, 5);
     }
 
+    #[cfg(feature = "xz")]
     #[test]
     fn recognizes_compressed_tar_and_bounded_entry_listing() {
         let tar = tar_fixture();
@@ -756,6 +767,7 @@ mod tests {
         assert_eq!(compression.decompressed_bytes, 13);
     }
 
+    #[cfg(feature = "xz")]
     fn tar_fixture() -> Vec<u8> {
         let mut builder = tar::Builder::new(Vec::new());
         for (name, value) in [

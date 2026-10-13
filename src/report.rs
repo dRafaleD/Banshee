@@ -358,20 +358,49 @@ pub fn generate(
     }
     let bytes =
         crate::input::read_regular_file_limited(path, MAX_REPORT_FILE_BYTES, "report input")?;
-
-    let file = crate::file_inspect::inspect_bytes(&bytes, path.display().to_string(), max_entries)?;
-    let hashes = FileHashes {
-        md5: digest(&bytes, HashAlgorithm::Md5)?,
-        sha1: digest(&bytes, HashAlgorithm::Sha1)?,
-        sha256: file.sha256.clone(),
-        ssdeep: Some(crate::fuzzy::ssdeep(&bytes)),
-    };
-    let mut content_report = crate::batch::analyze_bytes_with_source(
+    generate_from_bytes(
         &bytes,
+        &path.display().to_string(),
+        rule_file.map(RuleSource::File),
+        max_entries,
         max_depth,
         max_tokens,
-        &path.display().to_string(),
-    );
+    )
+}
+
+/// Where local rules for a report come from.
+#[derive(Debug, Clone, Copy)]
+pub enum RuleSource<'a> {
+    File(&'a Path),
+    /// TOML rule source already in memory, with a label shown in reports.
+    Inline {
+        label: &'a str,
+        source: &'a str,
+    },
+}
+
+/// Builds a report for bytes already in memory, for example in a browser
+/// build where no file system is available. `name` labels the sample.
+pub fn generate_from_bytes(
+    bytes: &[u8],
+    name: &str,
+    rules: Option<RuleSource<'_>>,
+    max_entries: usize,
+    max_depth: u8,
+    max_tokens: usize,
+) -> Result<UnifiedReport> {
+    if bytes.len() as u64 > MAX_REPORT_FILE_BYTES {
+        bail!("file exceeds the 256 MiB report limit");
+    }
+    let file = crate::file_inspect::inspect_bytes(bytes, name.to_owned(), max_entries)?;
+    let hashes = FileHashes {
+        md5: digest(bytes, HashAlgorithm::Md5)?,
+        sha1: digest(bytes, HashAlgorithm::Sha1)?,
+        sha256: file.sha256.clone(),
+        ssdeep: Some(crate::fuzzy::ssdeep(bytes)),
+    };
+    let mut content_report =
+        crate::batch::analyze_bytes_with_source(bytes, max_depth, max_tokens, name);
     if let Some(document) = &file.document {
         // Shortcut arguments and package relationships are UTF-16 or compressed,
         // so printable-string extraction alone would miss their indicators.
@@ -380,7 +409,7 @@ pub fn generate(
             &document.analysis_text(),
             max_depth,
             max_tokens,
-            &format!("{} (document metadata)", path.display()),
+            &format!("{name} (document metadata)"),
         );
     }
     let content_analysis = ContentAnalysis {
@@ -392,11 +421,16 @@ pub fn generate(
         },
         report: content_report,
     };
-    let rule_analysis = match rule_file {
-        Some(rule_file) => RuleAnalysis {
+    let rule_analysis = match rules {
+        Some(RuleSource::File(rule_file)) => RuleAnalysis {
             status: SectionStatus::Completed,
             rule_file: Some(rule_file.display().to_string()),
-            report: Some(crate::rules::scan(rule_file, &bytes)?),
+            report: Some(crate::rules::scan(rule_file, bytes)?),
+        },
+        Some(RuleSource::Inline { label, source }) => RuleAnalysis {
+            status: SectionStatus::Completed,
+            rule_file: Some(label.to_owned()),
+            report: Some(crate::rules::scan_source(source, bytes)?),
         },
         None => RuleAnalysis {
             status: SectionStatus::NotRequested,

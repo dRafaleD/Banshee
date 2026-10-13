@@ -1,6 +1,7 @@
 /target/
 /dist/
 /fuzz/target/
+/web/target/
 /fuzz/corpus/
 /fuzz/artifacts/
 /banshee.cyclonedx.json

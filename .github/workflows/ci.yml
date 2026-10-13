@@ -73,6 +73,55 @@ jobs:
           path: dist/*
           if-no-files-found: error
           retention-days: 14
+  web:
+    name: Browser build (wasm32, no native libraries)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: |
+            . -> target
+            web -> target
+      - name: Library without native features
+        run: |
+          cargo test --no-default-features --lib --locked
+          cargo clippy --no-default-features --lib --locked -- -D warnings
+      - name: WebAssembly module
+        working-directory: web
+        run: |
+          cargo fmt -- --check
+          cargo clippy --locked --target wasm32-unknown-unknown -- -D warnings
+          cargo build --locked --release --target wasm32-unknown-unknown
+      - name: Module imports no host functions
+        run: |
+          python3 - <<'CHECK'
+          data = open("web/target/wasm32-unknown-unknown/release/banshee_web.wasm", "rb").read()
+          assert data[:4] == b"\x00asm", "not a WebAssembly module"
+          def leb(index):
+              value = shift = 0
+              while True:
+                  byte = data[index]; index += 1
+                  value |= (byte & 0x7F) << shift; shift += 7
+                  if byte < 0x80:
+                      return value, index
+          index = 8
+          while index < len(data):
+              section = data[index]
+              size, index = leb(index + 1)
+              if section == 2:
+                  count, _ = leb(index)
+                  assert count == 0, f"module imports {count} host functions"
+              index += size
+          print("no imports")
+          CHECK
   provenance:
     name: Verify candidate provenance (${{ matrix.triple }})
     needs: test

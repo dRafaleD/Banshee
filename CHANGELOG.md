@@ -90,6 +90,17 @@ changes must be called out explicitly. Tags are immutable.
   system binaries, text files and block-size boundaries); the remaining case
   is a one-byte input where that implementation drops a character ssdeep's
   C source emits.
+- Browser build: `scripts/build-web.ps1` produces `dist/web/banshee.html`, a
+  single file with an embedded WebAssembly module that analyzes files and
+  decodes values inside the tab. The module imports no host functions and the
+  page's Content-Security-Policy blocks all network requests; reports render
+  in a script-less sandboxed frame. CI builds it and checks the import count.
+- Cargo features `xz` and `crypto-verify` (both on by default) gate liblzma and
+  ring. Without them XZ payloads are identified but not decompressed, JWT
+  verification reports that it is unavailable, and certificate chain
+  signatures report `unsupported`; `doctor` lists which are built in.
+- `report::generate_from_bytes` builds reports from memory with file or
+  inline rule sources.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule

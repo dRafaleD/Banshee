@@ -27,6 +27,15 @@ include = [
 name = "banshee"
 path = "src/main.rs"
 
+# Native builds keep every capability. Builds for targets without C toolchains
+# or OS randomness (such as wasm32-unknown-unknown) can disable these.
+[features]
+default = ["xz", "crypto-verify"]
+# XZ decompression through liblzma.
+xz = ["dep:xz2"]
+# JWT signature and X.509 chain signature verification through ring.
+crypto-verify = ["dep:jsonwebtoken", "x509-parser/verify"]
+
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"
@@ -37,7 +46,7 @@ clap_mangen = "0.2"
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 html-escape = "0.2"
 idna = "1.1"
-jsonwebtoken = { version = "9.3.1", default-features = false, features = ["use_pem"] }
+jsonwebtoken = { version = "9.3.1", default-features = false, features = ["use_pem"], optional = true }
 md4 = "0.10"
 md-5 = "0.10"
 percent-encoding = "2.3"
@@ -50,8 +59,8 @@ tar = "0.4"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 url = "2.5"
-x509-parser = { version = "0.18", features = ["verify"] }
-xz2 = "0.1"
+x509-parser = "0.18"
+xz2 = { version = "0.1", optional = true }
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
