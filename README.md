@@ -129,6 +129,8 @@ The initial foundation includes the following commands:
 - Detects common cloud access-key, GitHub/Slack-style token, bearer-token,
   credential-assignment, database-URI password, and private-key candidates.
 - Calculates and identifies MD5, NTLM, and SHA-family hashes; supports offline wordlists.
+- Computes and compares ssdeep fuzzy hashes; `diff` reports how similar two
+  samples are, which helps spot variants of the same file.
 - Converts Unix timestamps (s/ms/us/ns) and RFC3339 date-times.
 - Tests regular expressions and provides common security patterns.
 - Inspects local PEM/DER X.509 certificates, fingerprints, key sizes, constraints, KU/EKU, and SANs.

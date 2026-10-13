@@ -277,6 +277,24 @@ pub enum HashCommand {
     Identify(HashIdentifyArgs),
     /// Match a hash against an offline wordlist
     Crack(HashCrackArgs),
+    /// Calculate an ssdeep fuzzy hash of a value, file, or stdin
+    Ssdeep(HashSsdeepArgs),
+    /// Compare two ssdeep digests and print a 0-100 similarity score
+    CompareSsdeep(HashCompareSsdeepArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HashSsdeepArgs {
+    #[command(flatten)]
+    pub source: SourceArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct HashCompareSsdeepArgs {
+    /// First ssdeep digest, such as 96:abc...:def...
+    pub left: String,
+    /// Second ssdeep digest
+    pub right: String,
 }
 
 #[derive(Debug, Args)]

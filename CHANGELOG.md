@@ -83,6 +83,13 @@ changes must be called out explicitly. Tags are immutable.
   cargo-binstall metadata for release archives, and Scoop, Homebrew and winget
   templates filled from verified checksums by `scripts/render-packaging.ps1`.
   Nothing is published automatically.
+- ssdeep fuzzy hashing in safe Rust without new dependencies: reports include
+  `hashes.ssdeep`, `diff` shows a 0-100 `ssdeep_similarity` and imphash
+  changes, and `hash ssdeep` / `hash compare-ssdeep` work on any input.
+  Digests matched an independent implementation on 426 of 427 inputs (400
+  system binaries, text files and block-size boundaries); the remaining case
+  is a one-byte input where that implementation drops a character ssdeep's
+  C source emits.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule

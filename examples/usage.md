@@ -84,6 +84,8 @@ banshee evidence verify case-evidence
 # Explicit opt-in only when the original sample must be preserved in the bundle.
 banshee evidence create suspicious.bin --include-sample --output full-evidence
 banshee diff baseline-report.json current-report.json
+banshee hash ssdeep --file suspicious.bin
+banshee hash compare-ssdeep "96:abc...:def..." "96:abd...:def..."   # prints 0-100
 banshee diff baseline-evidence current-evidence --json
 banshee export report.json --format stix --output observables.stix.json
 banshee export case-evidence --format misp --output event.misp.json

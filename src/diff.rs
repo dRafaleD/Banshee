@@ -100,6 +100,9 @@ pub struct AnalysisDiff {
     pub right: DiffInput,
     pub fields: Vec<FieldChange>,
     pub entropy: EntropyDiff,
+    /// ssdeep similarity from 0 to 100; omitted when either report lacks ssdeep.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssdeep_similarity: Option<u8>,
     pub iocs: CollectionDiff,
     pub findings: CollectionDiff,
     pub rule_matches: CollectionDiff,
@@ -140,6 +143,8 @@ pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
         ("hash.md5", "/hashes/md5"),
         ("hash.sha1", "/hashes/sha1"),
         ("hash.sha256", "/hashes/sha256"),
+        ("hash.ssdeep", "/hashes/ssdeep"),
+        ("file.executable.imphash", "/file/executable/imphash"),
         ("file.format", "/file/format"),
         ("file.size", "/file/size"),
         ("file.executable.format", "/file/executable/format"),
@@ -284,6 +289,16 @@ pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
         right: right.input,
         fields,
         entropy,
+        ssdeep_similarity: match (
+            left.value.pointer("/hashes/ssdeep").and_then(Value::as_str),
+            right
+                .value
+                .pointer("/hashes/ssdeep")
+                .and_then(Value::as_str),
+        ) {
+            (Some(left), Some(right)) => crate::fuzzy::compare(left, right).ok(),
+            _ => None,
+        },
         iocs,
         findings,
         rule_matches,
@@ -332,6 +347,9 @@ fn write_text(output: &mut dyn Write, report: &AnalysisDiff) -> std::io::Result<
                 .map(|value| format!(" (delta {value:+.4})"))
                 .unwrap_or_default()
         )?;
+    }
+    if let Some(similarity) = report.ssdeep_similarity {
+        writeln!(output, "ssdeep similarity: {similarity}/100")?;
     }
     write_collection(output, "IOCs", &report.iocs)?;
     write_collection(output, "Findings", &report.findings)?;

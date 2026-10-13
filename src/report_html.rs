@@ -172,6 +172,9 @@ fn write_file_section(output: &mut dyn Write, report: &UnifiedReport) -> Result<
     row(output, "MD5", &code(&report.hashes.md5))?;
     row(output, "SHA-1", &code(&report.hashes.sha1))?;
     row(output, "SHA-256", &code(&report.hashes.sha256))?;
+    if let Some(ssdeep) = &report.hashes.ssdeep {
+        row(output, "ssdeep", &code(ssdeep))?;
+    }
     if let Some(compression) = &file.compression {
         row(
             output,

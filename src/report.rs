@@ -268,6 +268,9 @@ pub struct FileHashes {
     pub md5: String,
     pub sha1: String,
     pub sha256: String,
+    /// ssdeep fuzzy hash for similarity between related samples.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssdeep: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -361,6 +364,7 @@ pub fn generate(
         md5: digest(&bytes, HashAlgorithm::Md5)?,
         sha1: digest(&bytes, HashAlgorithm::Sha1)?,
         sha256: file.sha256.clone(),
+        ssdeep: Some(crate::fuzzy::ssdeep(&bytes)),
     };
     let mut content_report = crate::batch::analyze_bytes_with_source(
         &bytes,
@@ -543,6 +547,9 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
     writeln!(output, "MD5: {}", report.hashes.md5)?;
     writeln!(output, "SHA-1: {}", report.hashes.sha1)?;
     writeln!(output, "SHA-256: {}", report.hashes.sha256)?;
+    if let Some(ssdeep) = &report.hashes.ssdeep {
+        writeln!(output, "ssdeep: {ssdeep}")?;
+    }
     if let Some(compression) = &report.file.compression {
         writeln!(
             output,
@@ -691,7 +698,11 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
     writeln!(output, "- Size: {} bytes", report.file.size)?;
     writeln!(output, "- MD5: `{}`", report.hashes.md5)?;
     writeln!(output, "- SHA-1: `{}`", report.hashes.sha1)?;
-    writeln!(output, "- SHA-256: `{}`\n", report.hashes.sha256)?;
+    writeln!(output, "- SHA-256: `{}`", report.hashes.sha256)?;
+    if let Some(ssdeep) = &report.hashes.ssdeep {
+        writeln!(output, "- ssdeep: `{ssdeep}`")?;
+    }
+    writeln!(output)?;
     if let Some(compression) = &report.file.compression {
         writeln!(
             output,

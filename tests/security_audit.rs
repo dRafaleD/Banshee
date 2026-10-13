@@ -412,3 +412,74 @@ fn parallel_scans_must_match_sequential_output_and_size_budget() {
     assert_eq!(report["summary"]["total_size_limit_reached"], true);
     assert!(report["summary"]["bytes_analyzed"].as_u64().unwrap() <= 1500);
 }
+
+#[test]
+fn ssdeep_digests_compare_related_samples_and_appear_in_diffs() {
+    let f = Fixture::new("ssdeep");
+    let mut state = 0x9e37_79b9_u64;
+    let original = (0..80_000)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            b"abcdefghij klmnopqrstuvwxyz\n0123456789"[(state % 38) as usize]
+        })
+        .collect::<Vec<_>>();
+    let mut variant = original.clone();
+    variant[40_000..40_012].copy_from_slice(b"VARIANT-EDIT");
+    let left = f.0.join("left.txt");
+    let right = f.0.join("right.txt");
+    std::fs::write(&left, &original).unwrap();
+    std::fs::write(&right, &variant).unwrap();
+
+    let digest = |path: &std::path::Path| {
+        let output = Command::cargo_bin("banshee")
+            .unwrap()
+            .args(["hash", "ssdeep", "--file"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let (left_digest, right_digest) = (digest(&left), digest(&right));
+    assert_ne!(left_digest, right_digest);
+    let compared = Command::cargo_bin("banshee")
+        .unwrap()
+        .args(["hash", "compare-ssdeep", &left_digest, &right_digest])
+        .output()
+        .unwrap();
+    let score: u8 = String::from_utf8(compared.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(score >= 80, "score {score}");
+
+    let mut reports = Vec::new();
+    for path in [&left, &right] {
+        let report = f.0.join(format!(
+            "{}.json",
+            path.file_stem().unwrap().to_string_lossy()
+        ));
+        Command::cargo_bin("banshee")
+            .unwrap()
+            .arg("--output")
+            .arg(&report)
+            .arg("report")
+            .arg(path)
+            .args(["--format", "json"])
+            .assert()
+            .success();
+        reports.push(report);
+    }
+    let diff = Command::cargo_bin("banshee")
+        .unwrap()
+        .arg("diff")
+        .args(&reports)
+        .arg("--json")
+        .output()
+        .unwrap();
+    let diff: serde_json::Value = serde_json::from_slice(&diff.stdout).unwrap();
+    assert_eq!(diff["ssdeep_similarity"].as_u64(), Some(u64::from(score)));
+}

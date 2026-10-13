@@ -9,6 +9,7 @@ pub mod doctor;
 pub mod evidence;
 pub mod export;
 pub mod file_inspect;
+pub mod fuzzy;
 pub mod hash;
 pub mod input;
 pub mod ioc;
@@ -183,6 +184,14 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 output::print_json_or(&report, args.json, |output| {
                     writeln!(output, "{}\t{}", report.algorithm, report.digest)
                 })?;
+            }
+            HashCommand::Ssdeep(args) => {
+                let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
+                output::write_line(&fuzzy::ssdeep(&value))?;
+            }
+            HashCommand::CompareSsdeep(args) => {
+                let score = fuzzy::compare(&args.left, &args.right)?;
+                output::write_line(&score.to_string())?;
             }
             HashCommand::Identify(args) => {
                 let report = hash::identify(&args.value)?;
