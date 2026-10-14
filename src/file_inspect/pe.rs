@@ -60,6 +60,7 @@ pub(super) fn inspect_pe(bytes: &[u8]) -> Result<Option<ExecutableReport>> {
         imphash: None,
         rich_header: None,
         tls_callbacks: None,
+        universal_architectures: Vec::new(),
     };
     report.rich_header = super::pe_extra::rich_header(bytes, pe_offset);
     enrich_pe(bytes, pe_offset, optional, bits, sections, &mut report);

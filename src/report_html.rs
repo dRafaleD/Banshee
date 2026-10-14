@@ -377,7 +377,11 @@ fn write_executable(
     if let Some(present) = executable.signature_present {
         row(
             output,
-            "Certificate table",
+            if executable.signature_label().starts_with("Code") {
+                "Code signature"
+            } else {
+                "Certificate table"
+            },
             &format!("{present} <span class=\"muted\">(signature not verified)</span>"),
         )?;
     }

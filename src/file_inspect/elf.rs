@@ -79,6 +79,7 @@ pub(super) fn inspect_elf(bytes: &[u8]) -> Result<Option<ExecutableReport>> {
         imphash: None,
         rich_header: None,
         tls_callbacks: None,
+        universal_architectures: Vec::new(),
     };
     enrich_elf(bytes, bits, little, &mut report);
     Ok(Some(report))

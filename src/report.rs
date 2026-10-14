@@ -635,16 +635,23 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
         if let Some(present) = executable.signature_present {
             writeln!(
                 output,
-                "PE certificate table present: {present} (signature not verified)"
+                "{}: {present} (signature not verified)",
+                executable.signature_label()
             )?;
         }
         if let Some(interpreter) = &executable.interpreter {
-            writeln!(output, "ELF interpreter: {}", safe(interpreter))?;
+            writeln!(
+                output,
+                "{}: {}",
+                executable.interpreter_label(),
+                safe(interpreter)
+            )?;
         }
         if !executable.needed_libraries.is_empty() || executable.needed_libraries_truncated {
             writeln!(
                 output,
-                "ELF dynamic dependencies: {}{}",
+                "{}: {}{}",
+                executable.dependencies_label(),
                 executable.needed_libraries.len(),
                 if executable.needed_libraries_truncated {
                     " (truncated)"
@@ -789,16 +796,23 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
         if let Some(present) = executable.signature_present {
             writeln!(
                 output,
-                "- PE certificate table present: {present} (signature not verified)"
+                "- {}: {present} (signature not verified)",
+                executable.signature_label()
             )?;
         }
         if let Some(interpreter) = &executable.interpreter {
-            writeln!(output, "- ELF interpreter: `{}`", markdown(interpreter))?;
+            writeln!(
+                output,
+                "- {}: `{}`",
+                executable.interpreter_label(),
+                markdown(interpreter)
+            )?;
         }
         if !executable.needed_libraries.is_empty() || executable.needed_libraries_truncated {
             writeln!(
                 output,
-                "- ELF dynamic dependencies: {}{}",
+                "- {}: {}{}",
+                executable.dependencies_label(),
                 executable.needed_libraries.len(),
                 if executable.needed_libraries_truncated {
                     " (truncated)"

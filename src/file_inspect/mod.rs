@@ -13,6 +13,7 @@ mod archive;
 mod binary;
 mod document;
 mod elf;
+mod macho;
 mod ordinals;
 mod pe;
 mod pe_extra;
@@ -20,6 +21,7 @@ mod pe_extra;
 use archive::{inspect_tar, inspect_zip, is_tar, is_zip};
 pub use document::{DocumentProperty, DocumentReport, ExternalTarget};
 use elf::inspect_elf;
+use macho::inspect_macho;
 use pe::inspect_pe;
 pub use pe_extra::{RichEntry, RichHeader};
 
@@ -107,6 +109,42 @@ pub struct ExecutableReport {
     pub rich_header: Option<RichHeader>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_callbacks: Option<usize>,
+    /// Architectures of a Mach-O universal binary; details describe the first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub universal_architectures: Vec<String>,
+}
+
+impl ExecutableReport {
+    fn is_macho(&self) -> bool {
+        self.format == "Mach-O"
+    }
+
+    /// Label for `signature_present`, which means different things per format.
+    pub fn signature_label(&self) -> &'static str {
+        if self.is_macho() {
+            "Code signature present"
+        } else {
+            "PE certificate table present"
+        }
+    }
+
+    /// Label for `interpreter`.
+    pub fn interpreter_label(&self) -> &'static str {
+        if self.is_macho() {
+            "Dynamic linker"
+        } else {
+            "ELF interpreter"
+        }
+    }
+
+    /// Label for the `needed_libraries` count.
+    pub fn dependencies_label(&self) -> &'static str {
+        if self.is_macho() {
+            "Mach-O linked libraries"
+        } else {
+            "ELF dynamic dependencies"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -226,6 +264,16 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
     } else if let Some(executable) = inspect_pe(bytes)? {
         report.format = "PE executable".to_owned();
         attach_executable(&mut report, executable);
+    } else if let Some(executable) = inspect_macho(bytes)? {
+        report.format = if executable.universal_architectures.is_empty() {
+            "Mach-O executable".to_owned()
+        } else {
+            format!(
+                "Mach-O universal binary ({})",
+                executable.universal_architectures.join(", ")
+            )
+        };
+        attach_executable(&mut report, executable);
     } else if document::is_pdf(bytes) {
         report.format = "PDF document".to_owned();
         attach_document(&mut report, document::inspect_pdf(bytes));
@@ -260,6 +308,8 @@ fn inspect_compressed<R: Read>(
     } else if let Some(executable) = inspect_elf(&payload)? {
         attach_executable(report, executable);
     } else if let Some(executable) = inspect_pe(&payload)? {
+        attach_executable(report, executable);
+    } else if let Some(executable) = inspect_macho(&payload)? {
         attach_executable(report, executable);
     }
     Ok(())

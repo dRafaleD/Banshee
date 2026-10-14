@@ -572,13 +572,15 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                         if let Some(present) = executable.signature_present {
                             writeln!(
                                 output,
-                                "PE certificate table present: {present} (signature not verified)"
+                                "{}: {present} (signature not verified)",
+                                executable.signature_label()
                             )?;
                         }
                         if let Some(interpreter) = &executable.interpreter {
                             writeln!(
                                 output,
-                                "ELF interpreter: {}",
+                                "{}: {}",
+                                executable.interpreter_label(),
                                 output::terminal_safe(interpreter)
                             )?;
                         }
