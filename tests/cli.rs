@@ -46,6 +46,25 @@ fn banner_prints_wordmark_and_mask_silhouette() {
 }
 
 #[test]
+fn dotnet_metadata_of_a_framework_assembly() {
+    // Uses the .NET Framework installed on Windows; skipped elsewhere.
+    let path = std::path::Path::new(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.dll");
+    if !path.exists() {
+        return;
+    }
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["file", "inspect"])
+        .arg(path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Format: PE executable (.NET)"))
+        .stdout(predicate::str::contains(".NET assembly: System 4.0.0.0"))
+        .stdout(predicate::str::contains("mscorlib 4.0.0.0"))
+        .stdout(predicate::str::contains("kernel32.dll!"));
+}
+
+#[test]
 fn strings_lists_ascii_and_utf16_with_offsets() {
     let path = temp_fixture("strings.bin");
     let mut data = b"\x00\x01http://evil.example.test/a\x00\xff".to_vec();

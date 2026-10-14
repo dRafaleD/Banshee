@@ -12,6 +12,7 @@ use xz2::read::XzDecoder;
 mod archive;
 mod binary;
 mod document;
+mod dotnet;
 mod elf;
 mod macho;
 mod ordinals;
@@ -21,6 +22,7 @@ mod rtf;
 
 use archive::{inspect_tar, inspect_zip, is_tar, is_zip};
 pub use document::{DocumentProperty, DocumentReport, ExternalTarget};
+pub use dotnet::DotNetReport;
 use elf::inspect_elf;
 use macho::inspect_macho;
 use pe::inspect_pe;
@@ -113,6 +115,9 @@ pub struct ExecutableReport {
     /// Architectures of a Mach-O universal binary; details describe the first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub universal_architectures: Vec<String>,
+    /// CLI metadata of a managed (.NET) PE file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dotnet: Option<DotNetReport>,
 }
 
 impl ExecutableReport {
@@ -263,7 +268,11 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
         report.format = "ELF executable".to_owned();
         attach_executable(&mut report, executable);
     } else if let Some(executable) = inspect_pe(bytes)? {
-        report.format = "PE executable".to_owned();
+        report.format = if executable.dotnet.is_some() {
+            "PE executable (.NET)".to_owned()
+        } else {
+            "PE executable".to_owned()
+        };
         attach_executable(&mut report, executable);
     } else if let Some(executable) = inspect_macho(bytes)? {
         report.format = if executable.universal_architectures.is_empty() {

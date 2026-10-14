@@ -181,6 +181,7 @@ fn inspect_thin(bytes: &[u8], base: u64) -> Result<Option<ExecutableReport>> {
         rich_header: None,
         tls_callbacks: None,
         universal_architectures: Vec::new(),
+        dotnet: None,
     };
 
     if command_count > MAX_LOAD_COMMANDS {
