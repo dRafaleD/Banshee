@@ -70,7 +70,7 @@ pub struct ExternalTarget {
 }
 
 impl DocumentReport {
-    fn new(kind: &str) -> Self {
+    pub(super) fn new(kind: &str) -> Self {
         Self {
             kind: kind.to_owned(),
             macros_present: None,
@@ -82,14 +82,14 @@ impl DocumentReport {
         }
     }
 
-    fn property(&mut self, name: &str, value: impl Into<String>) {
+    pub(super) fn property(&mut self, name: &str, value: impl Into<String>) {
         self.properties.push(DocumentProperty {
             name: name.to_owned(),
             value: clip(&value.into()),
         });
     }
 
-    fn target(&mut self, relationship: &str, target: &str) {
+    pub(super) fn target(&mut self, relationship: &str, target: &str) {
         if self.external_targets.len() >= MAX_TARGETS {
             self.targets_truncated = true;
             return;

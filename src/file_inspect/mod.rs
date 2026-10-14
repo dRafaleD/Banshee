@@ -17,6 +17,7 @@ mod macho;
 mod ordinals;
 mod pe;
 mod pe_extra;
+mod rtf;
 
 use archive::{inspect_tar, inspect_zip, is_tar, is_zip};
 pub use document::{DocumentProperty, DocumentReport, ExternalTarget};
@@ -277,6 +278,9 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
     } else if document::is_pdf(bytes) {
         report.format = "PDF document".to_owned();
         attach_document(&mut report, document::inspect_pdf(bytes));
+    } else if rtf::is_rtf(bytes) {
+        report.format = "RTF document".to_owned();
+        attach_document(&mut report, rtf::inspect_rtf(bytes));
     }
 
     Ok(report)
