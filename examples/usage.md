@@ -73,6 +73,10 @@ banshee file inspect "Invoice.pdf.lnk"   # target, hidden arguments, icon decoys
 banshee file inspect package.tar.xz --json
 banshee file inspect suspicious.exe
 banshee file inspect application.elf --json
+banshee file inspect Installer.app/Contents/MacOS/Installer   # Mach-O, universal binaries
+banshee file inspect invoice.rtf        # embedded objects, remote templates, DDE
+banshee strings --file suspicious.exe --min-length 6
+banshee strings --file suspicious.exe --encoding utf16le --plain | sort -u
 # PE certificate-table presence is metadata only; signature trust is not verified.
 banshee report suspicious.exe
 banshee report suspicious.zip --format json --output report.json

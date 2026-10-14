@@ -34,7 +34,7 @@ Development guides: [installation](docs/INSTALLATION.md),
 | --- | --- | --- |
 | Understand an unknown value | `whatis`, `entropy`, `recipe` | Decoding layers and explainable signals |
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
-| Inspect local artifacts | `file inspect`, `jwt`, `cert`, `hash` | Structural metadata for archives, executables, Office, PDF and LNK files |
+| Inspect local artifacts | `file inspect`, `strings`, `jwt`, `cert`, `hash` | Structural metadata for archives, PE/ELF/Mach-O executables, Office, RTF, PDF and LNK files, and printable strings |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
@@ -144,7 +144,8 @@ target/release/banshee export case-evidence --format stix --output observables.s
 - Extract and normalize URLs, domains, IP addresses, hashes, emails, and other IOCs.
 - Track IOC source, line, column, and bounded optional context.
 - Detect common credential and private-key markers with safe default redaction.
-- Analyze entropy, common encodings, JWTs, hashes, timestamps, certificates, archives, ELF, and PE files.
+- Analyze entropy, common encodings, JWTs, hashes, timestamps, certificates, archives, and PE, ELF and Mach-O files.
+- List printable ASCII and UTF-16LE strings with offsets, like `strings`.
 - Run local TOML rules, inspect regex patterns, and watch fresh log lines.
 - Build unified text, JSON, Markdown, or script-free HTML reports for individual
   local files.
@@ -193,12 +194,19 @@ The initial foundation includes the following commands:
   for macros, remote templates, DDE fields, embedded objects, PDF actions and
   JavaScript, and hidden or script-launching shortcut arguments. Nothing is
   rendered, executed or extracted, and macro source code is not decompressed.
+- Inspects RTF documents for embedded OLE objects (Equation Editor, Package,
+  OLE2Link), automatically updating objects, remote templates and DDE or
+  remote-include fields, including RTF files with a truncated `{\rt` header.
 - Parses PE imports, named exports, section permissions, overlay data, and
   certificate-table presence metadata without verifying Authenticode trust.
 - Computes pefile-compatible PE import hashes, decodes and validates Rich
   headers, counts TLS callbacks and reports per-section entropy.
 - Parses ELF interpreters, dynamic dependencies, RPATH/RUNPATH, section
   permissions, and stripped/debug indicators.
+- Parses Mach-O and universal binaries: segments and protections, linked
+  dylibs, `LC_RPATH`, dynamic linker, entry point and code-signature
+  presence, flagging writable and executable segments, stack execution,
+  non-PIE executables and libraries loaded from writable paths.
 - Validates and scans with bounded local TOML rules using regex, literal, or
   wildcard-hex patterns, optional metadata, file/entropy predicates, and
   compound conditions.

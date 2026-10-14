@@ -5,6 +5,28 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+### Added
+
+- `banshee strings` lists printable ASCII and UTF-16LE strings with their
+  offsets (`--min-length`, `--encoding`, `--plain`, `--json`); `--max-strings`
+  bounds the list while the total is still counted.
+- Mach-O inspection in `file inspect`, `report`, `scan` and evidence bundles:
+  CPU, file type, segments with protections and entropy, linked dylibs,
+  `LC_RPATH`, dynamic linker, entry point and code-signature presence.
+  Universal binaries list their architectures and describe the first slice.
+  Writable and executable segments, stack execution, non-PIE executables,
+  encrypted images and libraries loaded from writable or relative paths are
+  flagged. Report JSON gains an optional `universal_architectures` field.
+- RTF inspection: object classes from `\objclass` and the OLE1 header in
+  `\objdata`, Equation Editor, Package, OLE2Link and script objects,
+  automatically updating objects, remote templates, DDE fields and
+  `INCLUDEPICTURE`/`INCLUDETEXT` fields that fetch remote or UNC content.
+
+### Changed
+
+- Executable signature, linker and dependency labels follow the format (for
+  example "Code signature present" for Mach-O instead of the PE wording).
+
 ## 0.2.0 — 2026-10-14
 
 ### Added
