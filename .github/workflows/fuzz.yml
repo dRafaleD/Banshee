@@ -1,0 +1,65 @@
+name: Parser fuzz smoke
+
+on:
+  pull_request:
+    paths: ['src/**', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
+  push:
+    branches: [master, 'codex/**']
+    paths: ['src/**', 'fuzz/**', 'examples/fuzz_seeds.rs', 'Cargo.toml', 'Cargo.lock', '.github/workflows/fuzz.yml']
+  schedule:
+    - cron: '41 6 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [file_inspect, analyze, ioc_extract, rules_scan, cert_parse, jwt_inspect, report_compat, recipe, codec_roundtrip, yara_import]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> target
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Prepare seed corpus
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$TARGET"
+          if [ "$TARGET" = file_inspect ]; then
+            rmdir "fuzz/corpus/$TARGET"
+            cargo +stable run --locked --example fuzz_seeds -- "fuzz/corpus/$TARGET"
+          elif [ -d "fuzz/seeds/$TARGET" ]; then
+            cp "fuzz/seeds/$TARGET"/* "fuzz/corpus/$TARGET/"
+          fi
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo +nightly fuzz run "$TARGET" -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: failure()
+        with:
+          name: parser-fuzz-failure-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/
+            fuzz/corpus/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "file": {"path": "synthetic/sample.bin", "size": 4, "format": "unknown"},
+  "hashes": {"md5": "00000000000000000000000000000000", "sha1": "0000000000000000000000000000000000000000", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+  "entropy": {"bits_per_byte": 0},
+  "content_analysis": {},
+  "rule_analysis": {},
+  "findings": [],
+  "summary": {}
+}

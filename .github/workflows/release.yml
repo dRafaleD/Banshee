@@ -1,76 +1,136 @@
 name: Release packages
-
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to package (must contain release infrastructure)
+        description: Existing version tag to package
         required: true
         type: string
-
 permissions:
   contents: read
-
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
-
 jobs:
   build:
+    name: Release package (${{ matrix.triple }})
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            triple: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - os: macos-15
+            triple: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    timeout-minutes: 40
     steps:
-      - name: Validate tag syntax
-        shell: pwsh
-        run: |
-          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') {
-            throw 'Expected a version tag such as v0.2.0 or v0.2.0-rc.1'
-          }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Check tag against package version
+      - name: Validate release version
         shell: pwsh
         run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$') { throw 'Invalid release tag' }
+          if ($env:GITHUB_REF -ne "refs/tags/$env:RELEASE_TAG") { throw 'Run this workflow at the selected tag, not a branch' }
           $metadata = cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed' }
           $package = $metadata.packages | Where-Object name -EQ banshee
           if ($env:RELEASE_TAG -ne "v$($package.version)") { throw 'Tag/version mismatch' }
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config liblzma-dev
+      - name: Install macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install xz
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
       - run: cargo test --all-targets --locked
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo build --release --locked
-      - name: Audit release dependencies
-        if: runner.os == 'Linux'
+      - name: Audit production and fuzz dependencies
+        if: runner.os == 'Linux' && matrix.triple == 'x86_64-unknown-linux-gnu'
         run: |
-          cargo install cargo-audit --locked
-          cargo audit
-      - shell: pwsh
-        run: ./scripts/package.ps1
-      - uses: actions/upload-artifact@v4
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo audit --file Cargo.lock --deny warnings
+          cargo audit --file fuzz/Cargo.lock --deny warnings
+      - name: Generate production SBOM
+        shell: pwsh
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'cargo-cyclonedx installation failed' }
+          ./scripts/sbom.ps1
+      - name: Package and smoke-test release binary
+        shell: pwsh
+        run: ./scripts/package.ps1 -SbomPath target/banshee.sbom.json
+      - name: Test isolated source installation
+        shell: pwsh
+        run: |
+          if ($IsWindows) {
+            ./scripts/test-install.ps1
+          } else {
+            bash ./scripts/test-install.sh
+            if ($LASTEXITCODE -ne 0) { throw 'Installer tests failed' }
+          }
+      - name: Select release package
+        id: package
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem dist -File | Where-Object { $_.Name -match '\.(zip|tar\.gz)$' })
+          $sboms = @(Get-ChildItem dist -File -Filter '*.sbom.json')
+          if ($archives.Count -ne 1 -or $sboms.Count -ne 1) { throw 'Expected one archive and SBOM' }
+          "archive=$($archives[0].FullName)" >> $env:GITHUB_OUTPUT
+          "sbom=$($sboms[0].FullName)" >> $env:GITHUB_OUTPUT
+      - name: Reject incompatible dependency inventories
+        shell: pwsh
+        run: ./scripts/test-package.ps1 -SbomPath target/banshee.sbom.json
+      - name: Attest release provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+      - name: Attest release SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+          sbom-path: ${{ steps.package.outputs.sbom }}
+      - name: Verify release attestations
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: |
+          gh attestation verify $env:ARCHIVE --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-digest $env:GITHUB_SHA --source-ref $env:GITHUB_REF
+          if ($LASTEXITCODE -ne 0) { throw 'Provenance verification failed' }
+          gh attestation verify $env:ARCHIVE --repo $env:GITHUB_REPOSITORY --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release.yml" --source-digest $env:GITHUB_SHA --source-ref $env:GITHUB_REF --predicate-type https://cyclonedx.org/bom
+          if ($LASTEXITCODE -ne 0) { throw 'SBOM attestation verification failed' }
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-${{ matrix.os }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 14
   draft:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
@@ -79,11 +139,11 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: refs/tags/${{ inputs.tag || github.ref_name }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: release-*
           merge-multiple: true

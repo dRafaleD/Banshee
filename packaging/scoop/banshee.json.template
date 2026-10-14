@@ -1,0 +1,28 @@
+{
+    "version": "@VERSION@",
+    "description": "Offline, pipe-friendly security analysis toolkit",
+    "homepage": "https://github.com/dRafaleD/Banshee",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/dRafaleD/Banshee/releases/download/v@VERSION@/banshee-@VERSION@-x86_64-pc-windows-msvc.zip",
+            "hash": "@SHA256_x86_64-pc-windows-msvc@",
+            "extract_dir": "banshee-@VERSION@-x86_64-pc-windows-msvc"
+        }
+    },
+    "bin": "banshee.exe",
+    "checkver": {
+        "github": "https://github.com/dRafaleD/Banshee"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/dRafaleD/Banshee/releases/download/v$version/banshee-$version-x86_64-pc-windows-msvc.zip",
+                "hash": {
+                    "url": "$url.sha256"
+                },
+                "extract_dir": "banshee-$version-x86_64-pc-windows-msvc"
+            }
+        }
+    }
+}

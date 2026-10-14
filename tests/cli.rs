@@ -32,8 +32,8 @@ fn banner_prints_wordmark_and_mask_silhouette() {
         .arg("banner")
         .assert()
         .success()
-        .stdout(predicate::str::contains("BBBB"))
-        .stdout(predicate::str::contains("(  )"))
+        .stdout(predicate::str::contains("|____/"))
+        .stdout(predicate::str::contains("⣿"))
         .stdout(predicate::str::contains("OFFLINE SECURITY"));
 
     let mut compact = Command::cargo_bin("banshee").expect("binary");
@@ -41,8 +41,46 @@ fn banner_prints_wordmark_and_mask_silhouette() {
         .args(["banner", "--compact"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("BBBB"))
-        .stdout(predicate::str::contains(".============").not());
+        .stdout(predicate::str::contains("|____/"))
+        .stdout(predicate::str::contains("⣿").not());
+}
+
+#[test]
+fn lang_tr_translates_labels_but_not_machine_readable_output() {
+    let mut turkish = Command::cargo_bin("banshee").expect("binary");
+    turkish
+        .args(["--lang", "tr", "whatis", "aGVsbG8="])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nihai sonuç:"))
+        .stdout(predicate::str::contains("Katmanlar:"));
+
+    let mut json = Command::cargo_bin("banshee").expect("binary");
+    json.args(["--lang", "tr", "whatis", "--json", "aGVsbG8="])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"final_value\""))
+        .stdout(predicate::str::contains("Nihai").not());
+
+    let mut help = Command::cargo_bin("banshee").expect("binary");
+    help.args(["--lang", "tr", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ANALİZ"))
+        .stdout(predicate::str::contains("HIZLI BAŞLANGIÇ"));
+
+    let mut env = Command::cargo_bin("banshee").expect("binary");
+    env.env("BANSHEE_LANG", "tr")
+        .args(["hash", "identify", "d41d8cd98f00b204e9800998ecf8427e"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Uzunluk: 128 bit"));
+
+    let mut invalid = Command::cargo_bin("banshee").expect("binary");
+    invalid
+        .args(["--lang", "xx", "whatis", "a"])
+        .assert()
+        .code(2);
 }
 
 #[test]
@@ -90,7 +128,7 @@ fn output_requires_force_before_overwriting() {
     assert!(
         std::fs::read_to_string(&path)
             .expect("read replaced output")
-            .contains("BBBB")
+            .contains("|____/")
     );
     std::fs::remove_file(path).expect("remove output");
 }

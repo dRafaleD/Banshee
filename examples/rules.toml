@@ -10,6 +10,7 @@ tags = ["powershell", "execution"]
 category = "execution"
 confidence = "medium"
 references = ["internal-playbook-7"]
+attack = ["TA0002", "T1059.001", "T1027"]
 max_matches = 100
 
 [[rules]]

@@ -57,6 +57,33 @@ fn read_limited<R: Read>(reader: R) -> Result<Vec<u8>> {
     read_limited_with_limit(reader, MAX_RAW_INPUT_BYTES)
 }
 
+/// Reads a regular file without trusting its earlier metadata size; a file
+/// that grows while it is read still stops one byte past `limit`.
+pub(crate) fn read_regular_file_limited(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>> {
+    let metadata = std::fs::metadata(path)
+        .with_context(|| format!("failed to inspect {label} '{}'", path.display()))?;
+    if !metadata.is_file() {
+        bail!("{label} '{}' is not a regular file", path.display());
+    }
+    if metadata.len() > limit {
+        bail!("{label} exceeds the {} safety limit", format_limit(limit));
+    }
+    let file =
+        File::open(path).with_context(|| format!("failed to read {label} '{}'", path.display()))?;
+    read_limited_with_limit(file, limit)
+        .with_context(|| format!("failed to read {label} '{}'", path.display()))
+}
+
+/// UTF-8 variant of [`read_regular_file_limited`].
+pub(crate) fn read_regular_text_file_limited(
+    path: &Path,
+    limit: u64,
+    label: &str,
+) -> Result<String> {
+    String::from_utf8(read_regular_file_limited(path, limit, label)?)
+        .with_context(|| format!("{label} '{}' is not valid UTF-8", path.display()))
+}
+
 fn read_limited_with_limit<R: Read>(reader: R, limit: u64) -> Result<Vec<u8>> {
     let mut value = Vec::new();
     reader
@@ -64,9 +91,21 @@ fn read_limited_with_limit<R: Read>(reader: R, limit: u64) -> Result<Vec<u8>> {
         .read_to_end(&mut value)
         .context("failed to read input")?;
     if value.len() as u64 > limit {
-        bail!("input exceeds the 64 MiB safety limit");
+        bail!("input exceeds the {} safety limit", format_limit(limit));
     }
     Ok(value)
+}
+
+fn format_limit(limit: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    const KIB: u64 = 1024;
+    if limit >= MIB && limit.is_multiple_of(MIB) {
+        format!("{} MiB", limit / MIB)
+    } else if limit >= KIB && limit.is_multiple_of(KIB) {
+        format!("{} KiB", limit / KIB)
+    } else {
+        format!("{limit}-byte")
+    }
 }
 
 fn ensure_size(size: usize) -> Result<()> {
@@ -111,5 +150,31 @@ mod tests {
 
         let too_large = Cursor::new(b"12345".to_vec());
         assert!(read_limited_with_limit(too_large, 4).is_err());
+    }
+
+    #[test]
+    fn regular_file_reader_enforces_limits_and_file_type() {
+        let directory = std::env::temp_dir().join(format!(
+            "banshee-input-limit-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&directory).expect("create directory");
+        let path = directory.join("value.txt");
+        std::fs::write(&path, b"12345").expect("write fixture");
+
+        assert_eq!(
+            super::read_regular_file_limited(&path, 5, "fixture").expect("within limit"),
+            b"12345"
+        );
+        let error = super::read_regular_file_limited(&path, 4, "fixture")
+            .expect_err("over limit")
+            .to_string();
+        assert!(error.contains("4-byte safety limit"), "{error}");
+        assert!(super::read_regular_file_limited(&directory, 5, "fixture").is_err());
+
+        std::fs::write(&path, [0xff, 0xfe]).expect("write invalid UTF-8");
+        assert!(super::read_regular_text_file_limited(&path, 5, "fixture").is_err());
+        std::fs::remove_dir_all(&directory).expect("remove directory");
     }
 }

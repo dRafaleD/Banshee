@@ -100,6 +100,9 @@ pub struct AnalysisDiff {
     pub right: DiffInput,
     pub fields: Vec<FieldChange>,
     pub entropy: EntropyDiff,
+    /// ssdeep similarity from 0 to 100; omitted when either report lacks ssdeep.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssdeep_similarity: Option<u8>,
     pub iocs: CollectionDiff,
     pub findings: CollectionDiff,
     pub rule_matches: CollectionDiff,
@@ -114,10 +117,10 @@ pub struct DiffInput {
     pub kind: InputKind,
 }
 
-struct LoadedReport {
-    input: DiffInput,
-    schema_version: u8,
-    value: Value,
+pub(crate) struct LoadedReport {
+    pub(crate) input: DiffInput,
+    pub(crate) schema_version: u8,
+    pub(crate) value: Value,
 }
 
 pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
@@ -130,21 +133,18 @@ pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
             right.schema_version
         );
     }
-    if left.schema_version != crate::report::REPORT_SCHEMA_VERSION {
-        bail!(
-            "unsupported report schema version {}; expected {}",
-            left.schema_version,
-            crate::report::REPORT_SCHEMA_VERSION
-        );
-    }
-    validate_report_shape(&left.value).context("left input is not a valid Banshee report")?;
-    validate_report_shape(&right.value).context("right input is not a valid Banshee report")?;
+    crate::report::validate_compatibility(&left.value)
+        .context("left input is not a valid Banshee report")?;
+    crate::report::validate_compatibility(&right.value)
+        .context("right input is not a valid Banshee report")?;
 
     let mut fields = Vec::new();
     for (name, pointer) in [
         ("hash.md5", "/hashes/md5"),
         ("hash.sha1", "/hashes/sha1"),
         ("hash.sha256", "/hashes/sha256"),
+        ("hash.ssdeep", "/hashes/ssdeep"),
+        ("file.executable.imphash", "/file/executable/imphash"),
         ("file.format", "/file/format"),
         ("file.size", "/file/size"),
         ("file.executable.format", "/file/executable/format"),
@@ -289,6 +289,16 @@ pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
         right: right.input,
         fields,
         entropy,
+        ssdeep_similarity: match (
+            left.value.pointer("/hashes/ssdeep").and_then(Value::as_str),
+            right
+                .value
+                .pointer("/hashes/ssdeep")
+                .and_then(Value::as_str),
+        ) {
+            (Some(left), Some(right)) => crate::fuzzy::compare(left, right).ok(),
+            _ => None,
+        },
         iocs,
         findings,
         rule_matches,
@@ -337,6 +347,9 @@ fn write_text(output: &mut dyn Write, report: &AnalysisDiff) -> std::io::Result<
                 .map(|value| format!(" (delta {value:+.4})"))
                 .unwrap_or_default()
         )?;
+    }
+    if let Some(similarity) = report.ssdeep_similarity {
+        writeln!(output, "ssdeep similarity: {similarity}/100")?;
     }
     write_collection(output, "IOCs", &report.iocs)?;
     write_collection(output, "Findings", &report.findings)?;
@@ -400,10 +413,19 @@ const fn availability(value: Availability) -> &'static str {
 }
 
 fn load_report(path: &Path) -> Result<LoadedReport> {
+    load_saved_report(path, "diff")
+}
+
+/// Loads a saved report JSON file or a manifest-verified evidence bundle,
+/// with credential values masked. `purpose` labels error messages.
+pub(crate) fn load_saved_report(path: &Path, purpose: &str) -> Result<LoadedReport> {
     let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("failed to inspect diff input '{}'", path.display()))?;
+        .with_context(|| format!("failed to inspect {purpose} input '{}'", path.display()))?;
     if metadata.file_type().is_symlink() {
-        bail!("diff input '{}' cannot be a symbolic link", path.display());
+        bail!(
+            "{purpose} input '{}' cannot be a symbolic link",
+            path.display()
+        );
     }
     let (report_path, kind) = if metadata.is_dir() {
         let verification = crate::evidence::verify(path)?;
@@ -419,24 +441,23 @@ fn load_report(path: &Path) -> Result<LoadedReport> {
         (path.to_owned(), InputKind::ReportJson)
     } else {
         bail!(
-            "diff input '{}' is not a regular report or bundle",
+            "{purpose} input '{}' is not a regular report or bundle",
             path.display()
         );
     };
     let report_metadata = fs::metadata(&report_path)
         .with_context(|| format!("failed to inspect report '{}'", report_path.display()))?;
     if report_metadata.len() > MAX_REPORT_BYTES {
-        bail!("diff report exceeds the 64 MiB safety limit");
+        bail!("{purpose} report exceeds the 64 MiB safety limit");
     }
-    let source = fs::read_to_string(&report_path)
-        .with_context(|| format!("failed to read report '{}'", report_path.display()))?;
+    let source = crate::input::read_regular_text_file_limited(
+        &report_path,
+        MAX_REPORT_BYTES,
+        &format!("{purpose} report"),
+    )?;
     let mut value: Value = serde_json::from_str(&source)
         .with_context(|| format!("invalid report JSON in '{}'", report_path.display()))?;
-    let schema = value
-        .get("schema_version")
-        .and_then(Value::as_u64)
-        .context("report is missing an integer schema_version")?;
-    let schema_version = u8::try_from(schema).context("report schema_version is out of range")?;
+    let schema_version = crate::report::schema_version(&value)?;
     sanitize_report_value(&mut value);
     Ok(LoadedReport {
         input: DiffInput {
@@ -446,48 +467,6 @@ fn load_report(path: &Path) -> Result<LoadedReport> {
         schema_version,
         value,
     })
-}
-
-fn validate_report_shape(value: &Value) -> Result<()> {
-    let object = value
-        .as_object()
-        .context("report root must be a JSON object")?;
-    for field in [
-        "file",
-        "hashes",
-        "entropy",
-        "content_analysis",
-        "rule_analysis",
-        "summary",
-    ] {
-        if !object.get(field).is_some_and(Value::is_object) {
-            bail!("report field '{field}' must be an object");
-        }
-    }
-    if !object.get("findings").is_some_and(Value::is_array) {
-        bail!("report field 'findings' must be an array");
-    }
-    for pointer in [
-        "/file/path",
-        "/file/format",
-        "/hashes/md5",
-        "/hashes/sha1",
-        "/hashes/sha256",
-    ] {
-        if !value.pointer(pointer).is_some_and(Value::is_string) {
-            bail!("report field '{pointer}' must be a string");
-        }
-    }
-    if !value.pointer("/file/size").is_some_and(Value::is_u64) {
-        bail!("report field '/file/size' must be a non-negative integer");
-    }
-    if !value
-        .pointer("/entropy/bits_per_byte")
-        .is_some_and(Value::is_number)
-    {
-        bail!("report field '/entropy/bits_per_byte' must be a number");
-    }
-    Ok(())
 }
 
 fn sanitize_report_value(value: &mut Value) {

@@ -1,6 +1,100 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
+
+/// Language of human-readable text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Language {
+    // No doc comments here: clap would switch `--help` to its long layout.
+    En,
+    Tr,
+}
+
+/// Turkish help text for the global flags, by argument id.
+const GLOBAL_HELP_TR: &[(&str, &str)] = &[
+    (
+        "fail_on_findings",
+        "Analiz gösterge veya şüpheli içerik bulursa 1 koduyla çık",
+    ),
+    ("no_color", "Okunur çıktıda ANSI renklerini kapat"),
+    ("color", "Okunur çıktı için renk politikası"),
+    (
+        "output",
+        "Çıktıyı yeni bir yerel yola yaz; evidence create dizin kullanır",
+    ),
+    (
+        "force",
+        "Desteklenen yerlerde --output ile mevcut hedefin üzerine yaz",
+    ),
+    (
+        "quiet",
+        "Normal çıktıyı gizle; hatalar ve çıkış kodları korunur",
+    ),
+    ("verbose", "Güvenli çalışma tanılarını stderr'e yaz"),
+    (
+        "lang",
+        "Okunur metin dili (BANSHEE_LANG=tr de olur); JSON ve rapor biçimleri İngilizce kalır",
+    ),
+];
+
+/// "QUICK START" block shown below the options.
+fn quick_start(turkish: bool) -> &'static str {
+    if turkish {
+        "HIZLI BAŞLANGIÇ:\n  banshee whatis aGVsbG8=\n  banshee extract --file application.log --defang\n  banshee report sample.bin --format json\n  banshee evidence verify case-evidence\n\nGirdi, biçim ve sınırlar için banshee <komut> --help kullanın.\nÇıkış kodları: 0 = başarılı; 1 = bulgu/fark/başarısız bütünlük; 2 = işletim hatası.\nBulgular normalde --fail-on-findings gerektirir; diff ve evidence verify doğrudan 1 döndürür."
+    } else {
+        "QUICK START:\n  banshee whatis aGVsbG8=\n  banshee extract --file application.log --defang\n  banshee report sample.bin --format json\n  banshee evidence verify case-evidence\n\nUse banshee <command> --help for inputs, formats, and limits.\nExit codes: 0 = success; 1 = findings/differences/failed integrity; 2 = operational error.\nFindings normally require --fail-on-findings; diff and evidence verify use status 1 directly."
+    }
+}
+
+/// The command definition with the categorized command menu in its help, in
+/// the current output language.
+pub fn command() -> clap::Command {
+    let turkish = crate::i18n::is_turkish();
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let color =
+        interactive && std::env::var_os("NO_COLOR").is_none() && crate::terminal::enable_ansi();
+    let options = crate::i18n::t("Options:", "Seçenekler:");
+    let mut command = Cli::command()
+        .help_template(format!(
+            "{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{{before-help}}\n{options}\n{{options}}\n{{after-help}}"
+        ))
+        .before_help(crate::shell_help::command_menu(color, turkish))
+        .after_help(quick_start(turkish));
+    if turkish {
+        command = command.about("Çevrimdışı, boru dostu güvenlik analiz araç seti");
+        for (id, help) in GLOBAL_HELP_TR {
+            command = command.mut_arg(*id, |argument| argument.help(*help));
+        }
+    }
+    command
+}
+
+/// Applies a `--lang` found in raw arguments, before clap renders any help.
+fn apply_language_from(arguments: &[std::ffi::OsString]) {
+    let words = arguments.iter().map(|argument| argument.to_string_lossy());
+    if let Some(turkish) = crate::i18n::language_from_arguments(words) {
+        crate::i18n::set_turkish(turkish);
+    }
+}
+
+/// Parses `arguments` (starting with the program name) with that definition.
+pub fn try_parse_from<I, T>(arguments: I) -> Result<Cli, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let arguments: Vec<std::ffi::OsString> = arguments.into_iter().map(Into::into).collect();
+    apply_language_from(&arguments);
+    Cli::from_arg_matches(&command().try_get_matches_from(arguments)?)
+}
+
+/// Parses the process arguments, printing help or errors and exiting like clap.
+pub fn parse() -> Cli {
+    let arguments: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    apply_language_from(&arguments);
+    let matches = command().get_matches_from(arguments);
+    Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -8,6 +102,13 @@ use clap::{Args, Parser, Subcommand};
     version,
     about = "Offline, pipe-friendly security analysis toolkit",
     long_about = None,
+    help_template = "{about-with-newline}
+{usage-heading} {usage}
+
+{before-help}
+Options:
+{options}
+{after-help}",
     after_help = "QUICK START:\n  banshee whatis aGVsbG8=\n  banshee extract --file application.log --defang\n  banshee report sample.bin --format json\n  banshee evidence verify case-evidence\n\nUse banshee <command> --help for inputs, formats, and limits.\nExit codes: 0 = success; 1 = findings/differences/failed integrity; 2 = operational error.\nFindings normally require --fail-on-findings; diff and evidence verify use status 1 directly."
 )]
 pub struct Cli {
@@ -38,6 +139,10 @@ pub struct Cli {
     /// Emit safe execution diagnostics to stderr
     #[arg(long, global = true, conflicts_with = "quiet")]
     pub verbose: bool,
+
+    /// Language of human-readable text (BANSHEE_LANG=tr also works); JSON and reports stay English
+    #[arg(long, global = true, value_enum, value_name = "LANG")]
+    pub lang: Option<Language>,
 
     #[command(subcommand)]
     pub command: Command,
@@ -75,6 +180,8 @@ pub enum Command {
     Evidence(EvidenceArgs),
     /// Compare two report JSON files or verified evidence bundles
     Diff(DiffArgs),
+    /// Export saved report observables as STIX 2.1, MISP or CSV
+    Export(ExportArgs),
     /// Encode text using a selected format
     Encode(EncodeArgs),
     /// Decode data using a selected format
@@ -83,6 +190,10 @@ pub enum Command {
     Recipe(RecipeArgs),
     /// Follow appended log lines and analyze them locally
     Watch(WatchArgs),
+    /// Check the local installation offline (codecs, data, PATH, temp directory)
+    Doctor(DoctorArgs),
+    /// Open the interactive console (also the default when run on a terminal)
+    Shell,
     /// Print the Banshee ASCII banner and mask emblem
     Banner(BannerArgs),
     /// Generate shell completion definitions
@@ -273,6 +384,24 @@ pub enum HashCommand {
     Identify(HashIdentifyArgs),
     /// Match a hash against an offline wordlist
     Crack(HashCrackArgs),
+    /// Calculate an ssdeep fuzzy hash of a value, file, or stdin
+    Ssdeep(HashSsdeepArgs),
+    /// Compare two ssdeep digests and print a 0-100 similarity score
+    CompareSsdeep(HashCompareSsdeepArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HashSsdeepArgs {
+    #[command(flatten)]
+    pub source: SourceArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct HashCompareSsdeepArgs {
+    /// First ssdeep digest, such as 96:abc...:def...
+    pub left: String,
+    /// Second ssdeep digest
+    pub right: String,
 }
 
 #[derive(Debug, Args)]
@@ -465,6 +594,16 @@ pub enum RulesCommand {
     Validate(RulesValidateArgs),
     /// Scan a value, file, or stdin with a local rule file
     Scan(RulesScanArgs),
+    /// Convert a local TOML rule file to YARA, marking anything not expressible
+    ExportYara(RulesPathArgs),
+    /// Convert a supported subset of YARA rules to Banshee TOML
+    ImportYara(RulesPathArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RulesPathArgs {
+    /// Input rule file
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -585,6 +724,10 @@ pub struct ScanArgs {
     /// Maximum nested decoding layers per file
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(1..=32))]
     pub max_depth: u8,
+
+    /// Files analyzed concurrently (0 = available cores, at most 4); results stay in path order
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u16).range(0..=64))]
+    pub jobs: u16,
 }
 
 #[derive(Debug, Args)]
@@ -638,6 +781,16 @@ pub struct EvidenceVerifyArgs {
     /// Emit machine-readable JSON
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ExportArgs {
+    /// Report JSON file or evidence bundle directory
+    pub input: PathBuf,
+
+    /// Export format; observables only, never verdicts or redacted secrets
+    #[arg(long, value_enum)]
+    pub format: crate::export::ExportFormat,
 }
 
 #[derive(Debug, Args)]
@@ -729,6 +882,13 @@ pub struct WatchArgs {
     /// Output format for each analyzed batch
     #[arg(long, value_enum, conflicts_with = "json")]
     pub format: Option<crate::output::OutputFormat>,
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

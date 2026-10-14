@@ -11,11 +11,16 @@ Banshee is an offline, pipe-friendly security analysis toolkit written in Rust.
 Turn a suspicious value, local file, or log into explainable findings and
 shareable reports. Decode nested content, normalize indicators, inspect PE/ELF
 metadata, apply local rules, and preserve results in verifiable evidence bundles.
-Analysis runs locally on Linux and Windows without uploading your inputs.
+Analysis runs locally without uploading your inputs.
 
 [Quick start](#quick-guide) · [Capabilities](#choose-a-workflow) ·
 [Install](#build) · [Command examples](examples/usage.md) ·
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+
+Development guides: [installation](docs/INSTALLATION.md),
+[report compatibility](docs/REPORT_COMPATIBILITY.md),
+[package provenance](docs/SUPPLY_CHAIN.md),
+[ongoing security checks](docs/SECURITY_CHECKS.md).
 
 > [!WARNING]
 > **Alpha / early draft.** Banshee is under active development. Expect incomplete,
@@ -29,15 +34,64 @@ Analysis runs locally on Linux and Windows without uploading your inputs.
 | --- | --- | --- |
 | Understand an unknown value | `whatis`, `entropy`, `recipe` | Decoding layers and explainable signals |
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
-| Inspect local artifacts | `file inspect`, `jwt`, `cert`, `hash` | Structural metadata and explicit verification where supported |
+| Inspect local artifacts | `file inspect`, `jwt`, `cert`, `hash` | Structural metadata for archives, executables, Office, PDF and LNK files |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
-| Prepare an investigation report | `report` | Text, JSON or Markdown |
+| Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
+| Share observables with other tools | `export` | STIX 2.1, MISP event JSON or CSV |
+| Work interactively | `banshee`, `shell` | A `banshee>` console with categorized help and Tab completion |
+| Check your installation | `doctor` | Offline report on codecs, bundled data, PATH and temp directory |
 
 Output formats vary by command. Use `banshee <command> --help` for supported
 formats and limits. Findings are triage signals; review them before acting.
 
 ## Quick guide
+
+Run `banshee` without arguments for a start screen: a green-on-black emblem,
+a summary of what this build supports, and common commands. Colors appear only
+in interactive terminals and respect `NO_COLOR`.
+
+### Interactive console
+
+On a terminal the start screen leads into an interactive console, so commands
+are typed without the `banshee` prefix. `banshee shell` opens it directly.
+
+<img src="assets/banshee-console-session.png" alt="Banshee console running whatis, hash identify and timestamp to-human" width="100%">
+
+- `help` groups every command by category (analysis, files and reports,
+  encoding and tokens, case work, system); `help <category>` or
+  `help <command>` goes deeper.
+- Tab completes commands, subcommands, `--flags`, flag values such as
+  `--format`, and file paths. Up and Down recall earlier lines; history stays
+  in memory and is never written to disk.
+- `pwd`, `cd`, `ls`, `clear` and `exit` are console built-ins, and a leading
+  `/` is optional. Everything else is the normal command line with the same
+  flags and output.
+- `open sample.bin` keeps a file open for the session; the prompt then reads
+  `banshee (sample.bin)>`. Use `@` for it in any command (`report @ --format
+  json`, `whatis @`), or type `report`, `file`, `cert`, `scan`, `entropy`,
+  `whatis`, `analyze` or `extract` alone. `status` shows the directory, open
+  file and language, and `close` forgets the file.
+- Type `tr` (or `lang tr`) to switch the console to Turkish and `en` to
+  switch back. The menu, built-in messages and command descriptions are
+  translated; the option text of `help <command>` stays in English.
+- Pipes and scripts are unaffected: without a terminal, bare `banshee` only
+  prints the start screen. Builds without the `line-editor` feature (such as
+  the browser build) read plain lines and skip Tab completion.
+
+<img src="assets/banshee-console-help.png" alt="The categorized help menu of the Banshee console" width="100%">
+
+### Turkish output
+
+`--lang tr` (or `BANSHEE_LANG=tr`) switches human-readable text to Turkish on
+the command line too: `banshee --lang tr --help` shows the categorized menu,
+options and quick start in Turkish, and the labels of `whatis`, `entropy`,
+`jwt inspect`, `hash identify` and `timestamp` are translated. JSON, JSONL,
+CSV, Markdown, HTML, STIX and MISP output, rule and finding texts, and the
+text of other commands stay in English so that scripts and shared reports do
+not change with the language.
+
+### First commands
 
 Try a harmless decoding example after building:
 
@@ -79,6 +133,9 @@ target/release/banshee evidence verify case-evidence
 
 # Compare two saved reports or verified evidence directories.
 target/release/banshee diff baseline-report.json current-report.json
+
+# Share observables from a saved report or verified bundle (never verdicts or secrets).
+target/release/banshee export case-evidence --format stix --output observables.stix.json
 ```
 
 ### What it can help with
@@ -89,7 +146,8 @@ target/release/banshee diff baseline-report.json current-report.json
 - Detect common credential and private-key markers with safe default redaction.
 - Analyze entropy, common encodings, JWTs, hashes, timestamps, certificates, archives, ELF, and PE files.
 - Run local TOML rules, inspect regex patterns, and watch fresh log lines.
-- Build unified text, JSON, or Markdown reports for individual local files.
+- Build unified text, JSON, Markdown, or script-free HTML reports for individual
+  local files.
 - Create manifest-backed evidence directories and verify their file hashes
   completely offline.
 - Compare compatible reports or evidence bundles without reopening or
@@ -105,6 +163,12 @@ The initial foundation includes the following commands:
 - Detects Base64, hexadecimal, URL encoding, and HTML entities.
 - Recursively decodes nested layers with depth and size limits.
 - Detects Base64/Hex-wrapped gzip and zlib layers with a 16 MiB decompression limit.
+- Unwraps UTF-16LE text (for example PowerShell `-EncodedCommand`) and
+  heuristic single-byte and repeating-key XOR layers inside Base64/Hex
+  payloads; XOR keys are reported and never treated as certain.
+- Rewrites common script obfuscation without executing it: character-code
+  arrays, `\xNN` escapes, string concatenation, PowerShell format strings and
+  reversed literals.
 - Flags JWTs, IPv4 addresses, domains, URLs, and common hash lengths.
 - Measures Shannon entropy and gives an explainable triage score.
 - Inspects JWT headers and payloads without claiming signature verification.
@@ -113,6 +177,8 @@ The initial foundation includes the following commands:
 - Detects common cloud access-key, GitHub/Slack-style token, bearer-token,
   credential-assignment, database-URI password, and private-key candidates.
 - Calculates and identifies MD5, NTLM, and SHA-family hashes; supports offline wordlists.
+- Computes and compares ssdeep fuzzy hashes; `diff` reports how similar two
+  samples are, which helps spot variants of the same file.
 - Converts Unix timestamps (s/ms/us/ns) and RFC3339 date-times.
 - Tests regular expressions and provides common security patterns.
 - Inspects local PEM/DER X.509 certificates, fingerprints, key sizes, constraints, KU/EKU, and SANs.
@@ -123,8 +189,14 @@ The initial foundation includes the following commands:
 - Encodes and decodes Base64, Base64URL, Base32, Ascii85, Hex, Binary, Octal, ROT13, Punycode/IDNA, URL, HTML, and Unicode escapes.
 - Applies auditable, bounded transformation recipes including gzip and zlib layers.
 - Lists ZIP/TAR contents without extraction, inspects gzip/XZ/BZip2 payloads, and flags unsafe archive paths.
+- Inspects Office (OOXML and legacy OLE), PDF and Windows shortcut (LNK) files
+  for macros, remote templates, DDE fields, embedded objects, PDF actions and
+  JavaScript, and hidden or script-launching shortcut arguments. Nothing is
+  rendered, executed or extracted, and macro source code is not decompressed.
 - Parses PE imports, named exports, section permissions, overlay data, and
   certificate-table presence metadata without verifying Authenticode trust.
+- Computes pefile-compatible PE import hashes, decodes and validates Rich
+  headers, counts TLS callbacks and reports per-section entropy.
 - Parses ELF interpreters, dynamic dependencies, RPATH/RUNPATH, section
   permissions, and stripped/debug indicators.
 - Validates and scans with bounded local TOML rules using regex, literal, or
@@ -139,18 +211,32 @@ The initial foundation includes the following commands:
 - Accepts a positional value, a file, or stdin.
 - Supports human-readable, JSON, JSONL, and CSV output for extraction, bulk analysis, and log watching.
 
+## Browser build
+
+`pwsh -File scripts/build-web.ps1` (after `rustup target add
+wasm32-unknown-unknown`) writes `dist/web/banshee.html`: one self-contained
+page that analyzes a dropped file or decodes a value inside the browser tab.
+The embedded WebAssembly module imports no browser functions, and the page's
+Content-Security-Policy (`default-src 'none'`) blocks every network request, so
+inputs cannot be uploaded. Reports open in a sandboxed frame without scripts.
+The browser build omits XZ decompression and JWT/X.509 signature checks, which
+need native libraries; use the command-line tool for those.
+
 ## Build
 
 ### Requirements
 
-- **Linux and Windows x86_64** are covered by the CI matrix (`ubuntu-latest`
-  and `windows-latest`). The CI badge links to actual run results.
+- The native CI matrix covers **Windows x86_64, Linux x86_64/ARM64 and macOS
+  Intel/Apple Silicon**. The CI badge links to actual run results; source support
+  does not imply every platform is already available on the Releases page.
 - **Rust 1.88 or newer**. The repository selects the latest stable toolchain
   through `rust-toolchain.toml`; the minimum version is declared, not separately
   tested in the CI matrix.
 - Linux: C build tools, `pkg-config`, and liblzma development headers (on Ubuntu:
   `sudo apt-get install build-essential pkg-config liblzma-dev`). Windows: Visual
   Studio C++ build tools and a Windows SDK with the Rust MSVC toolchain.
+- macOS: Xcode command line tools and Homebrew `xz`; native installer scripts
+  also need Python 3. See the [installation guide](docs/INSTALLATION.md).
 
 > [!NOTE]
 > Banshee has not been published to crates.io during the alpha phase, so
@@ -182,6 +268,9 @@ sh scripts/install.sh
 ```
 
 Use `--prefix /chosen/path` or set `PREFIX` to choose another installation root.
+Existing installations require explicit `--force`. Windows users can run
+`pwsh -File scripts/install.ps1`; both installers offer help and a custom prefix.
+See [safe installation and troubleshooting](docs/INSTALLATION.md).
 
 ## Examples
 
@@ -260,6 +349,11 @@ For CI failures, open the badge's run log; local success alone does not prove th
 the other platform passed.
 
 ## Testing
+
+The next development cycle is tracked in [the quality plan](docs/QUALITY_PLAN.md).
+Parser resilience checks include ordinary tests for synthetic truncated
+and mutated PE/ELF/archive inputs and expansion limits. For bounded sanitizer fuzz
+campaigns and failure reproduction, see [fuzz/README.md](fuzz/README.md).
 
 Run the same checks used by CI before opening a pull request:
 
@@ -347,6 +441,7 @@ tags = ["powershell", "execution"]
 category = "execution"
 confidence = "medium"
 references = ["internal-playbook-7"]
+attack = ["T1059.001", "T1027"]
 max_matches = 100
 
 [[rules]]
@@ -391,8 +486,22 @@ pattern = "cmd.exe"
 case_insensitive = true
 ```
 
-`category`, `confidence` (`low`, `medium`, or `high`), and `references` are
-reporting metadata only. References are never opened or fetched. Unknown TOML
+### YARA interoperability
+
+`banshee rules export-yara RULES.toml` writes YARA rules; anything YARA cannot
+express exactly (for example the `text` file type) becomes a warning comment,
+and unsupported regex features skip the rule with a reason.
+`banshee rules import-yara RULES.yar` converts a subset: text, plain hex and
+regex strings (`nocase`), `$a`, `#a >= N`, `and`/`or`, `any/all of them`,
+string sets such as `any of ($x*)`, PE/ELF/ZIP/gzip magic checks and
+`math.entropy` bounds. Modifiers such as `wide`, `xor` or `fullword`, hex jumps
+and `N of them` are reported per rule instead of being approximated.
+
+`category`, `confidence` (`low`, `medium`, or `high`), `references`, and
+`attack` are reporting metadata only. `attack` accepts up to 16 unique MITRE
+ATT&CK tactic (`TA0002`), technique (`T1059`) or sub-technique (`T1059.001`)
+identifiers; reports list them with the matching rule and HTML reports
+summarize them as rule-declared coverage. References are never opened or fetched. Unknown TOML
 fields, duplicate IDs, invalid ranges, oversized condition groups, invalid
 patterns, and unsupported schema versions are rejected with actionable errors
 by `rules validate` and `rules scan`.
@@ -412,8 +521,9 @@ by `rules validate` and `rules scan`.
   sections, packer-associated names, and overlays are explainable triage
   properties, not malware verdicts.
 - Local rule matches are triage signals, not proof that a payload is malicious; review offsets and context before acting.
-- Rule confidence and references are author-supplied metadata, not validation
-  of a claim. Banshee never fetches rule references.
+- Rule confidence, references and ATT&CK identifiers are author-supplied
+  metadata, not validation of a claim or observed behavior. Banshee never
+  fetches rule references.
 - Evidence bundles omit the source sample by default. `--include-sample` is an
   explicit opt-in that copies it as `source-sample.bin`; protect and share such
   bundles according to the sensitivity of the original data.
@@ -441,9 +551,11 @@ Read the [contribution guide](CONTRIBUTING.md), [changelog](CHANGELOG.md) and
 [roadmap](ROADMAP.md). Report reproducible bugs with synthetic inputs using the
 issue forms. For vulnerabilities, follow the [security policy](SECURITY.md).
 
-CI checks formatting, tests, Clippy and release builds on Linux and Windows,
-then smoke-tests the packaged binary. A separate scheduled dependency audit checks
-published RustSec advisories. A passing audit is not a guarantee of security.
+CI checks formatting, tests, Clippy and release builds on the five native targets,
+then smoke-tests packaged binaries and isolated source installation. Trusted
+candidate/release runs verify archive provenance and dependency inventories.
+Scheduled audits cover both lockfiles; parser fuzzing retains failures for review.
+A passing check is not a guarantee of security. See [check handling](docs/SECURITY_CHECKS.md).
 
 ## License
 

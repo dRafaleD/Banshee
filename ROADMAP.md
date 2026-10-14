@@ -247,9 +247,12 @@ Delivered in v0.1 development:
 
 ## Later candidates
 
+The next agreed sequence is tracked in [docs/QUALITY_PLAN.md](docs/QUALITY_PLAN.md):
+parser resilience, release provenance, platform coverage, report compatibility,
+daily CLI use, and ongoing security. Each phase has explicit verification;
+independent implementation work may run in parallel.
+
 These remain outside the committed sequence until the core phases are stable:
 
-- export compatible Banshee rules to a limited YARA subset;
-- `banshee doctor` for local installation diagnostics;
-- optional HTML report rendering;
-- PowerShell completion and expanded shell integration.
+- expanded shell integration (PowerShell completion is already available);
+- additional browser-build features such as evidence bundles and diffs.

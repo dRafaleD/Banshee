@@ -5,10 +5,14 @@ use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use x509_parser::certificate::X509Certificate;
+#[cfg(feature = "crypto-verify")]
 use x509_parser::error::X509Error;
 use x509_parser::extensions::GeneralName;
 use x509_parser::parse_x509_certificate;
 use x509_parser::pem::Pem;
+
+const MAX_CERTIFICATE_FILE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_CHAIN_CERTIFICATES: usize = 64;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BasicConstraintsReport {
@@ -80,12 +84,22 @@ pub struct CertificateChainReport {
 }
 
 pub fn inspect_file(path: &Path) -> Result<CertificateReport> {
-    let certificates = load_certificates(path)?;
+    inspect_bytes(&read_certificate_file(path)?)
+}
+
+/// Inspects the first certificate in PEM or DER bytes already held in memory.
+pub fn inspect_bytes(input: &[u8]) -> Result<CertificateReport> {
+    let certificates = decode_certificates(input)?;
     certificate_report(&certificates[0].1, &certificates[0].0)
 }
 
 pub fn inspect_chain_file(path: &Path) -> Result<CertificateChainReport> {
-    let encoded = load_certificates(path)?;
+    inspect_chain_bytes(&read_certificate_file(path)?)
+}
+
+/// Inspects a PEM chain (or a single DER certificate) already held in memory.
+pub fn inspect_chain_bytes(input: &[u8]) -> Result<CertificateChainReport> {
+    let encoded = decode_certificates(input)?;
     let mut certificates = Vec::with_capacity(encoded.len());
     for (format, der) in &encoded {
         certificates.push(certificate_report(der, format)?);
@@ -139,23 +153,33 @@ pub fn inspect_chain_file(path: &Path) -> Result<CertificateChainReport> {
     })
 }
 
-fn load_certificates(path: &Path) -> Result<Vec<(String, Vec<u8>)>> {
-    let input = std::fs::read(path)
-        .with_context(|| format!("failed to read certificate '{}'", path.display()))?;
-    let without_bom = input.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&input);
+fn read_certificate_file(path: &Path) -> Result<Vec<u8>> {
+    crate::input::read_regular_file_limited(path, MAX_CERTIFICATE_FILE_BYTES, "certificate")
+}
+
+fn decode_certificates(input: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    if input.len() as u64 > MAX_CERTIFICATE_FILE_BYTES {
+        return Err(anyhow!("certificate input exceeds the 4 MiB safety limit"));
+    }
+    let without_bom = input.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(input);
     let first_content = without_bom
         .iter()
         .position(|byte| !byte.is_ascii_whitespace())
         .unwrap_or(0);
     if !without_bom[first_content..].starts_with(b"-----BEGIN") {
-        parse_certificate(&input)?;
-        return Ok(vec![("DER".to_owned(), input)]);
+        parse_certificate(input)?;
+        return Ok(vec![("DER".to_owned(), input.to_vec())]);
     }
 
     let mut certificates = Vec::new();
-    for (index, block) in Pem::iter_from_buffer(&input).enumerate() {
+    for (index, block) in Pem::iter_from_buffer(input).enumerate() {
         let pem = block.map_err(|error| anyhow!("invalid PEM block {}: {error}", index + 1))?;
         if pem.label == "CERTIFICATE" {
+            if certificates.len() == MAX_CHAIN_CERTIFICATES {
+                return Err(anyhow!(
+                    "PEM input contains more than {MAX_CHAIN_CERTIFICATES} certificates"
+                ));
+            }
             parse_certificate(&pem.contents)
                 .with_context(|| format!("invalid certificate in PEM block {}", index + 1))?;
             certificates.push(("PEM".to_owned(), pem.contents));
@@ -260,11 +284,20 @@ fn verify_signature(
     certificate: &X509Certificate<'_>,
     issuer: Option<&X509Certificate<'_>>,
 ) -> SignatureStatus {
-    let issuer_key = issuer.map(|certificate| certificate.public_key());
-    match certificate.verify_signature(issuer_key) {
-        Ok(()) => SignatureStatus::Valid,
-        Err(X509Error::SignatureUnsupportedAlgorithm) => SignatureStatus::Unsupported,
-        Err(_) => SignatureStatus::Invalid,
+    #[cfg(feature = "crypto-verify")]
+    {
+        let issuer_key = issuer.map(|certificate| certificate.public_key());
+        match certificate.verify_signature(issuer_key) {
+            Ok(()) => SignatureStatus::Valid,
+            Err(X509Error::SignatureUnsupportedAlgorithm) => SignatureStatus::Unsupported,
+            Err(_) => SignatureStatus::Invalid,
+        }
+    }
+    // Builds without signature support never claim a valid or invalid chain.
+    #[cfg(not(feature = "crypto-verify"))]
+    {
+        let _ = (certificate, issuer);
+        SignatureStatus::Unsupported
     }
 }
 

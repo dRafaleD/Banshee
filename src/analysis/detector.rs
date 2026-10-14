@@ -4,7 +4,7 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 use super::EncodingKind;
-use super::decoder::compression_kind;
+use super::decoder::encoded_payload_confidence;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Detection {
@@ -19,6 +19,7 @@ pub(super) fn detect_best(input: &str) -> Option<Detection> {
         detect_url(input),
         detect_hex(input),
         detect_base64(input),
+        super::script::detect(input),
     ]
     .into_iter()
     .flatten()
@@ -61,10 +62,10 @@ fn detect_base64(input: &str) -> Option<Detection> {
     let decoded = [STANDARD, STANDARD_NO_PAD, URL_SAFE_NO_PAD]
         .iter()
         .find_map(|engine| engine.decode(&compact).ok())?;
-    if compression_kind(&decoded).is_some() {
+    if let Some(confidence) = encoded_payload_confidence(&decoded) {
         return Some(Detection {
             kind: EncodingKind::Base64,
-            confidence: 0.99,
+            confidence,
         });
     }
     let text = std::str::from_utf8(&decoded).ok()?;
@@ -102,10 +103,10 @@ fn detect_hex(input: &str) -> Option<Detection> {
             u8::from_str_radix(pair, 16).ok()
         })
         .collect::<Option<Vec<_>>>()?;
-    if compression_kind(&decoded).is_some() {
+    if let Some(confidence) = encoded_payload_confidence(&decoded) {
         return Some(Detection {
             kind: EncodingKind::Hex,
-            confidence: 0.99,
+            confidence,
         });
     }
     let text = std::str::from_utf8(&decoded).ok()?;

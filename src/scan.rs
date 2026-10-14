@@ -33,7 +33,14 @@ pub struct ScanOptions<'a> {
     pub max_entries: usize,
     pub max_depth: u8,
     pub max_tokens: usize,
+    /// Files analyzed concurrently; `0` selects the available parallelism,
+    /// capped at [`DEFAULT_MAX_JOBS`]. Output order never depends on it.
+    pub jobs: usize,
 }
+
+/// Default ceiling for concurrent file analyses, bounding peak memory to
+/// roughly this many times the per-file size limit.
+pub const DEFAULT_MAX_JOBS: usize = 4;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DirectoryScanReport {
@@ -152,10 +159,13 @@ pub fn scan(root: &Path, options: ScanOptions<'_>) -> Result<DirectoryScanReport
         .count();
     let files_omitted_by_limit = discovered_files.saturating_sub(options.max_files);
     let mut files_considered = 0_usize;
-    let mut bytes_analyzed = 0_u64;
-    let mut results = Vec::new();
+    let mut reserved_bytes = 0_u64;
+    let mut planned = Vec::with_capacity(entries.len());
     let mut total_size_limit_reached = false;
 
+    // Decisions that depend on order (file count and the combined size budget)
+    // are made here in path order, so concurrent analysis cannot change them.
+    // The budget is reserved by each file's declared size.
     for entry in entries {
         match entry.kind {
             DiscoveredKind::File(size) => {
@@ -164,16 +174,16 @@ pub fn scan(root: &Path, options: ScanOptions<'_>) -> Result<DirectoryScanReport
                 }
                 files_considered += 1;
                 if !filters.selected(&entry.relative) {
-                    results.push(result(
+                    planned.push(done(result(
                         entry.relative,
                         FileScanStatus::Skipped,
                         Some("path excluded by include/exclude filters".to_owned()),
                         Some(size),
-                    ));
+                    )));
                     continue;
                 }
                 if size > options.max_file_size {
-                    results.push(result(
+                    planned.push(done(result(
                         entry.relative,
                         FileScanStatus::Skipped,
                         Some(format!(
@@ -181,76 +191,53 @@ pub fn scan(root: &Path, options: ScanOptions<'_>) -> Result<DirectoryScanReport
                             options.max_file_size
                         )),
                         Some(size),
-                    ));
+                    )));
                     continue;
                 }
-                if size > options.max_total_size.saturating_sub(bytes_analyzed) {
+                if size > options.max_total_size.saturating_sub(reserved_bytes) {
                     total_size_limit_reached = true;
-                    results.push(result(
+                    planned.push(done(result(
                         entry.relative,
                         FileScanStatus::Skipped,
                         Some("combined scan size limit reached".to_owned()),
                         Some(size),
-                    ));
+                    )));
                     continue;
                 }
-
-                match crate::report::generate(
-                    &entry.path,
-                    options.rule_file,
-                    options.max_entries,
-                    options.max_depth,
-                    options.max_tokens,
-                ) {
-                    Ok(report) => {
-                        bytes_analyzed = bytes_analyzed.saturating_add(report.file.size as u64);
-                        results.push(FileScanResult {
-                            path: entry.relative,
-                            status: FileScanStatus::Analyzed,
-                            reason: None,
-                            size: Some(report.file.size as u64),
-                            report: Some(report),
-                        });
-                    }
-                    Err(error) => {
-                        let status = if error
-                            .chain()
-                            .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
-                            .any(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
-                        {
-                            FileScanStatus::Unreadable
-                        } else {
-                            FileScanStatus::Failed
-                        };
-                        results.push(result(
-                            entry.relative,
-                            status,
-                            Some(format!("{error:#}")),
-                            Some(size),
-                        ));
-                    }
-                }
+                reserved_bytes = reserved_bytes.saturating_add(size);
+                planned.push(Planned::Analyze {
+                    path: entry.path,
+                    relative: entry.relative,
+                    size,
+                });
             }
-            DiscoveredKind::Symlink => results.push(result(
+            DiscoveredKind::Symlink => planned.push(done(result(
                 entry.relative,
                 FileScanStatus::Skipped,
                 Some("symbolic link not followed".to_owned()),
                 None,
-            )),
-            DiscoveredKind::Unsupported(reason) => results.push(result(
+            ))),
+            DiscoveredKind::Unsupported(reason) => planned.push(done(result(
                 entry.relative,
                 FileScanStatus::Unsupported,
                 Some(reason),
                 None,
-            )),
-            DiscoveredKind::Unreadable(reason) => results.push(result(
+            ))),
+            DiscoveredKind::Unreadable(reason) => planned.push(done(result(
                 entry.relative,
                 FileScanStatus::Unreadable,
                 Some(reason),
                 None,
-            )),
+            ))),
         }
     }
+
+    let results = run_planned(planned, &options);
+    let bytes_analyzed = results
+        .iter()
+        .filter(|item| item.status == FileScanStatus::Analyzed)
+        .filter_map(|item| item.size)
+        .fold(0_u64, u64::saturating_add);
 
     let mut summary = ScanSummary {
         discovered_files,
@@ -421,6 +408,117 @@ fn discover(
         directories.sort_by(|left, right| right.0.cmp(&left.0));
     }
     Ok((output, entry_limit_reached))
+}
+
+enum Planned {
+    Done(Box<FileScanResult>),
+    Analyze {
+        path: PathBuf,
+        relative: String,
+        size: u64,
+    },
+}
+
+fn done(result: FileScanResult) -> Planned {
+    Planned::Done(Box::new(result))
+}
+
+fn worker_count(requested: usize, work: usize) -> usize {
+    let automatic = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(DEFAULT_MAX_JOBS);
+    let jobs = if requested == 0 { automatic } else { requested };
+    jobs.clamp(1, work.max(1))
+}
+
+/// Analyzes planned files on scoped worker threads; each result is written
+/// back to its planned position so output order matches path order.
+fn run_planned(planned: Vec<Planned>, options: &ScanOptions<'_>) -> Vec<FileScanResult> {
+    let work = planned
+        .iter()
+        .filter(|item| matches!(item, Planned::Analyze { .. }))
+        .count();
+    let jobs = worker_count(options.jobs, work);
+    let slots = planned
+        .into_iter()
+        .map(|item| std::sync::Mutex::new(Some(item)))
+        .collect::<Vec<_>>();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let finished = slots
+        .iter()
+        .map(|_| std::sync::Mutex::new(None))
+        .collect::<Vec<_>>();
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(slot) = slots.get(index) else {
+                        break;
+                    };
+                    let item = slot
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take()
+                        .expect("each slot is taken once");
+                    let outcome = match item {
+                        Planned::Done(result) => *result,
+                        Planned::Analyze {
+                            path,
+                            relative,
+                            size,
+                        } => analyze_file(&path, relative, size, options),
+                    };
+                    *finished[index]
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+                }
+            });
+        }
+    });
+    finished
+        .into_iter()
+        .map(|slot| {
+            slot.into_inner()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .expect("every planned entry produces a result")
+        })
+        .collect()
+}
+
+fn analyze_file(
+    path: &Path,
+    relative: String,
+    size: u64,
+    options: &ScanOptions<'_>,
+) -> FileScanResult {
+    match crate::report::generate(
+        path,
+        options.rule_file,
+        options.max_entries,
+        options.max_depth,
+        options.max_tokens,
+    ) {
+        Ok(report) => FileScanResult {
+            path: relative,
+            status: FileScanStatus::Analyzed,
+            reason: None,
+            size: Some(report.file.size as u64),
+            report: Some(report),
+        },
+        Err(error) => {
+            let status = if error
+                .chain()
+                .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+                .any(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+            {
+                FileScanStatus::Unreadable
+            } else {
+                FileScanStatus::Failed
+            };
+            result(relative, status, Some(format!("{error:#}")), Some(size))
+        }
+    }
 }
 
 fn result(

@@ -15,11 +15,240 @@ use crate::rules::{RuleMatchReport, ScanReport, Severity};
 pub const REPORT_SCHEMA_VERSION: u8 = 1;
 const MAX_REPORT_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Read the wire version without assuming that the schema is supported.
+pub fn schema_version(value: &serde_json::Value) -> Result<u8> {
+    let object = value
+        .as_object()
+        .context("report root must be a JSON object")?;
+    let version = object
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .context("report is missing an integer schema_version")?;
+    u8::try_from(version).context("report schema_version is out of range")
+}
+
+/// Validate saved JSON against its version's compatibility contract.
+/// Optional historical fields remain missing; unknown additions are ignored.
+/// Errors identify schema locations, never values from the saved report.
+pub fn validate_compatibility(value: &serde_json::Value) -> Result<u8> {
+    let version = schema_version(value)?;
+    match version {
+        1 => validate_v1(value)?,
+        _ => bail!("unsupported report schema version {version}; expected 1"),
+    }
+    Ok(version)
+}
+
+#[derive(Clone, Copy)]
+enum SchemaType {
+    Object,
+    Array,
+    String,
+    Unsigned,
+    Number,
+    Boolean,
+}
+
+impl SchemaType {
+    fn accepts(self, value: &serde_json::Value) -> bool {
+        match self {
+            Self::Object => value.is_object(),
+            Self::Array => value.is_array(),
+            Self::String => value.is_string(),
+            Self::Unsigned => value.is_u64(),
+            Self::Number => value.is_number(),
+            Self::Boolean => value.is_boolean(),
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Object => "an object",
+            Self::Array => "an array",
+            Self::String => "a string",
+            Self::Unsigned => "a non-negative integer",
+            Self::Number => "a number",
+            Self::Boolean => "a boolean",
+        }
+    }
+}
+
+fn schema_field(
+    value: &serde_json::Value,
+    pointer: &str,
+    kind: SchemaType,
+    required: bool,
+) -> Result<()> {
+    match value.pointer(pointer).filter(|value| !value.is_null()) {
+        Some(value) if kind.accepts(value) => Ok(()),
+        None if !required => Ok(()),
+        _ => bail!("report field '{pointer}' must be {}", kind.description()),
+    }
+}
+
+fn schema_collection(
+    value: &serde_json::Value,
+    pointer: &str,
+    fields: &[(&str, SchemaType, bool)],
+) -> Result<()> {
+    schema_field(value, pointer, SchemaType::Array, false)?;
+    if let Some(items) = value.pointer(pointer).and_then(serde_json::Value::as_array) {
+        for (index, item) in items.iter().enumerate() {
+            if !item.is_object() {
+                bail!("report item '{pointer}/{index}' must be an object");
+            }
+            for (name, kind, required) in fields {
+                schema_field(item, &format!("/{name}"), *kind, *required)
+                    .with_context(|| format!("invalid report item '{pointer}/{index}'"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_v1(value: &serde_json::Value) -> Result<()> {
+    use SchemaType::{Array, Boolean, Number, Object, String, Unsigned};
+    for field in [
+        "file",
+        "hashes",
+        "entropy",
+        "content_analysis",
+        "rule_analysis",
+        "summary",
+    ] {
+        schema_field(value, &format!("/{field}"), Object, true)?;
+    }
+    schema_field(value, "/findings", Array, true)?;
+    for pointer in [
+        "/file/path",
+        "/file/format",
+        "/hashes/md5",
+        "/hashes/sha1",
+        "/hashes/sha256",
+    ] {
+        schema_field(value, pointer, String, true)?;
+    }
+    schema_field(value, "/file/size", Unsigned, true)?;
+    schema_field(value, "/entropy/bits_per_byte", Number, true)?;
+
+    // The v1 reader permits these sections and attributes to be omitted. Do
+    // not invent values or turn unavailable collections into [].
+    for pointer in [
+        "/file/executable",
+        "/file/archive",
+        "/content_analysis/report",
+        "/content_analysis/report/iocs",
+        "/rule_analysis/report",
+    ] {
+        schema_field(value, pointer, Object, false)?;
+    }
+    for pointer in [
+        "/content_analysis/status",
+        "/content_analysis/mode",
+        "/rule_analysis/status",
+        "/rule_analysis/rule_file",
+        "/file/executable/format",
+        "/file/executable/architecture",
+        "/file/executable/kind",
+        "/file/executable/entry_point",
+    ] {
+        schema_field(value, pointer, String, false)?;
+    }
+    for pointer in [
+        "/file/executable/bits",
+        "/file/archive/total_entries",
+        "/file/archive/total_size",
+        "/summary/total_findings",
+        "/summary/file_findings",
+        "/summary/content_findings",
+        "/summary/iocs",
+        "/summary/matched_rules",
+    ] {
+        schema_field(value, pointer, Unsigned, false)?;
+    }
+    schema_collection(
+        value,
+        "/content_analysis/report/iocs/iocs",
+        &[
+            ("kind", String, true),
+            ("value", String, true),
+            ("occurrences", Unsigned, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/findings",
+        &[
+            ("source", String, true),
+            ("kind", String, true),
+            ("value", String, true),
+            ("detail", String, true),
+            ("severity", String, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/rule_analysis/report/matches",
+        &[
+            ("id", String, true),
+            ("description", String, false),
+            ("severity", String, false),
+            ("kind", String, false),
+            ("category", String, false),
+            ("confidence", String, false),
+            ("total_matches", Unsigned, false),
+            ("truncated", Boolean, false),
+            ("conditions", Object, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/file/archive/entries",
+        &[
+            ("name", String, true),
+            ("kind", String, false),
+            ("size", Unsigned, false),
+            ("compressed_size", Unsigned, false),
+            ("encrypted", Boolean, false),
+            ("path_safe", Boolean, false),
+        ],
+    )?;
+    schema_collection(
+        value,
+        "/file/executable/section_details",
+        &[
+            ("name", String, true),
+            ("virtual_address", String, false),
+            ("file_offset", Unsigned, false),
+            ("file_size", Unsigned, false),
+            ("memory_size", Unsigned, false),
+            ("readable", Boolean, false),
+            ("allocated", Boolean, false),
+            ("writable", Boolean, false),
+            ("executable", Boolean, false),
+        ],
+    )?;
+    if let Some(items) = value
+        .pointer("/rule_analysis/report/matches")
+        .and_then(serde_json::Value::as_array)
+    {
+        for (index, item) in items.iter().enumerate() {
+            for name in ["all_required", "all_matched", "any_required", "any_matched"] {
+                schema_field(item, &format!("/conditions/{name}"), Unsigned, false)
+                    .with_context(|| format!("invalid rule conditions at item {index}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ReportFormat {
     Text,
     Json,
     Markdown,
+    /// Self-contained, script-free HTML page.
+    Html,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +268,9 @@ pub struct FileHashes {
     pub md5: String,
     pub sha1: String,
     pub sha256: String,
+    /// ssdeep fuzzy hash for similarity between related samples.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssdeep: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -125,20 +357,61 @@ pub fn generate(
         bail!("file exceeds the 256 MiB report limit");
     }
     let bytes =
-        std::fs::read(path).with_context(|| format!("failed to read '{}'", path.display()))?;
-
-    let file = crate::file_inspect::inspect_bytes(&bytes, path.display().to_string(), max_entries)?;
-    let hashes = FileHashes {
-        md5: digest(&bytes, HashAlgorithm::Md5)?,
-        sha1: digest(&bytes, HashAlgorithm::Sha1)?,
-        sha256: file.sha256.clone(),
-    };
-    let content_report = crate::batch::analyze_bytes_with_source(
+        crate::input::read_regular_file_limited(path, MAX_REPORT_FILE_BYTES, "report input")?;
+    generate_from_bytes(
         &bytes,
+        &path.display().to_string(),
+        rule_file.map(RuleSource::File),
+        max_entries,
         max_depth,
         max_tokens,
-        &path.display().to_string(),
-    );
+    )
+}
+
+/// Where local rules for a report come from.
+#[derive(Debug, Clone, Copy)]
+pub enum RuleSource<'a> {
+    File(&'a Path),
+    /// TOML rule source already in memory, with a label shown in reports.
+    Inline {
+        label: &'a str,
+        source: &'a str,
+    },
+}
+
+/// Builds a report for bytes already in memory, for example in a browser
+/// build where no file system is available. `name` labels the sample.
+pub fn generate_from_bytes(
+    bytes: &[u8],
+    name: &str,
+    rules: Option<RuleSource<'_>>,
+    max_entries: usize,
+    max_depth: u8,
+    max_tokens: usize,
+) -> Result<UnifiedReport> {
+    if bytes.len() as u64 > MAX_REPORT_FILE_BYTES {
+        bail!("file exceeds the 256 MiB report limit");
+    }
+    let file = crate::file_inspect::inspect_bytes(bytes, name.to_owned(), max_entries)?;
+    let hashes = FileHashes {
+        md5: digest(bytes, HashAlgorithm::Md5)?,
+        sha1: digest(bytes, HashAlgorithm::Sha1)?,
+        sha256: file.sha256.clone(),
+        ssdeep: Some(crate::fuzzy::ssdeep(bytes)),
+    };
+    let mut content_report =
+        crate::batch::analyze_bytes_with_source(bytes, max_depth, max_tokens, name);
+    if let Some(document) = &file.document {
+        // Shortcut arguments and package relationships are UTF-16 or compressed,
+        // so printable-string extraction alone would miss their indicators.
+        crate::batch::merge_supplementary_text(
+            &mut content_report,
+            &document.analysis_text(),
+            max_depth,
+            max_tokens,
+            &format!("{name} (document metadata)"),
+        );
+    }
     let content_analysis = ContentAnalysis {
         status: SectionStatus::Completed,
         mode: if content_report.binary.is_some() {
@@ -148,11 +421,16 @@ pub fn generate(
         },
         report: content_report,
     };
-    let rule_analysis = match rule_file {
-        Some(rule_file) => RuleAnalysis {
+    let rule_analysis = match rules {
+        Some(RuleSource::File(rule_file)) => RuleAnalysis {
             status: SectionStatus::Completed,
             rule_file: Some(rule_file.display().to_string()),
-            report: Some(crate::rules::scan(rule_file, &bytes)?),
+            report: Some(crate::rules::scan(rule_file, bytes)?),
+        },
+        Some(RuleSource::Inline { label, source }) => RuleAnalysis {
+            status: SectionStatus::Completed,
+            rule_file: Some(label.to_owned()),
+            report: Some(crate::rules::scan_source(source, bytes)?),
         },
         None => RuleAnalysis {
             status: SectionStatus::NotRequested,
@@ -259,10 +537,17 @@ fn rule_finding(rule: &RuleMatchReport) -> ReportFinding {
         severity: rule.severity,
         kind: rule.kind.to_string(),
         value: rule.id.clone(),
-        detail: if rule.description.is_empty() {
-            format!("{} matches", rule.total_matches)
-        } else {
-            rule.description.clone()
+        detail: {
+            let detail = if rule.description.is_empty() {
+                format!("{} matches", rule.total_matches)
+            } else {
+                rule.description.clone()
+            };
+            if rule.attack.is_empty() {
+                detail
+            } else {
+                format!("{detail} [ATT&CK {}]", rule.attack.join(", "))
+            }
         },
     }
 }
@@ -284,6 +569,7 @@ pub fn write_to(
             writeln!(output).context("failed to write unified report")
         }
         ReportFormat::Markdown => write_markdown(output, report),
+        ReportFormat::Html => crate::report_html::write_html(output, report),
     }
 }
 
@@ -295,6 +581,9 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
     writeln!(output, "MD5: {}", report.hashes.md5)?;
     writeln!(output, "SHA-1: {}", report.hashes.sha1)?;
     writeln!(output, "SHA-256: {}", report.hashes.sha256)?;
+    if let Some(ssdeep) = &report.hashes.ssdeep {
+        writeln!(output, "ssdeep: {ssdeep}")?;
+    }
     if let Some(compression) = &report.file.compression {
         writeln!(
             output,
@@ -375,6 +664,9 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
             )?;
         }
     }
+    if let Some(document) = &report.file.document {
+        crate::output::write_document(output, document)?;
+    }
     if let Some(archive) = &report.file.archive {
         writeln!(
             output,
@@ -440,7 +732,11 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
     writeln!(output, "- Size: {} bytes", report.file.size)?;
     writeln!(output, "- MD5: `{}`", report.hashes.md5)?;
     writeln!(output, "- SHA-1: `{}`", report.hashes.sha1)?;
-    writeln!(output, "- SHA-256: `{}`\n", report.hashes.sha256)?;
+    writeln!(output, "- SHA-256: `{}`", report.hashes.sha256)?;
+    if let Some(ssdeep) = &report.hashes.ssdeep {
+        writeln!(output, "- ssdeep: `{ssdeep}`")?;
+    }
+    writeln!(output)?;
     if let Some(compression) = &report.file.compression {
         writeln!(
             output,
@@ -489,6 +785,7 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
                 ""
             }
         )?;
+        crate::output::write_pe_metadata(output, executable, "- ")?;
         if let Some(present) = executable.signature_present {
             writeln!(
                 output,
@@ -518,6 +815,28 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
                 output,
                 "- Executable parser warnings: {} (not suspicious findings)",
                 executable.parse_warnings.len()
+            )?;
+        }
+    }
+    if let Some(document) = &report.file.document {
+        writeln!(output, "- Document: {}", markdown(&document.kind))?;
+        if let Some(macros) = document.macros_present {
+            writeln!(output, "- Macros present: {macros}")?;
+        }
+        for property in &document.properties {
+            writeln!(
+                output,
+                "- {}: `{}`",
+                markdown(&property.name),
+                markdown(&property.value)
+            )?;
+        }
+        for target in &document.external_targets {
+            writeln!(
+                output,
+                "- External {}: `{}`",
+                markdown(&target.relationship),
+                markdown(&target.target)
             )?;
         }
     }

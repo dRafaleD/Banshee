@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use clap::ValueEnum;
+#[cfg(feature = "crypto-verify")]
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::Serialize;
 use serde_json::Value;
@@ -42,6 +43,7 @@ impl std::fmt::Display for JwtAlgorithm {
     }
 }
 
+#[cfg(feature = "crypto-verify")]
 impl From<JwtAlgorithm> for Algorithm {
     fn from(value: JwtAlgorithm) -> Self {
         match value {
@@ -162,6 +164,25 @@ pub fn inspect(token: &str) -> Result<JwtReport> {
 }
 
 pub fn verify(
+    token: &str,
+    algorithm: JwtAlgorithm,
+    options: JwtVerifyOptions<'_>,
+) -> Result<JwtVerifyReport> {
+    #[cfg(feature = "crypto-verify")]
+    {
+        verify_signature(token, algorithm, options)
+    }
+    #[cfg(not(feature = "crypto-verify"))]
+    {
+        let _ = (token, algorithm, options);
+        bail!(
+            "JWT signature verification is not available in this build (crypto-verify feature disabled)"
+        )
+    }
+}
+
+#[cfg(feature = "crypto-verify")]
+fn verify_signature(
     token: &str,
     algorithm: JwtAlgorithm,
     options: JwtVerifyOptions<'_>,
@@ -291,11 +312,16 @@ fn security_notes(header: &Value, signature: &SignatureInfo) -> Vec<SecurityNote
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "crypto-verify")]
     use jsonwebtoken::{EncodingKey, Header, encode};
+    #[cfg(feature = "crypto-verify")]
     use serde_json::json;
 
-    use super::{JwtAlgorithm, JwtVerifyOptions, Severity, inspect, verify};
+    #[cfg(feature = "crypto-verify")]
+    use super::{JwtAlgorithm, JwtVerifyOptions, verify};
+    use super::{Severity, inspect};
 
+    #[cfg(feature = "crypto-verify")]
     fn hmac_options<'a>(secret: &'a str, validate_time: bool) -> JwtVerifyOptions<'a> {
         JwtVerifyOptions {
             secret: Some(secret),
@@ -335,6 +361,7 @@ mod tests {
         assert!(inspect("not-a-jwt").is_err());
     }
 
+    #[cfg(feature = "crypto-verify")]
     #[test]
     fn verifies_hs256_with_explicit_algorithm() {
         let token = encode(
@@ -353,6 +380,7 @@ mod tests {
         assert_eq!(report.payload["sub"], "123");
     }
 
+    #[cfg(feature = "crypto-verify")]
     #[test]
     fn rejects_wrong_hmac_secret() {
         let token = encode(
@@ -371,6 +399,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "crypto-verify")]
     #[test]
     fn rejects_expired_tokens_unless_time_is_ignored() {
         let token = encode(
@@ -397,6 +426,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "crypto-verify")]
     #[test]
     fn validates_expected_audience_and_issuer() {
         let token = encode(
@@ -422,5 +452,26 @@ mod tests {
         .expect("valid claims");
         assert!(report.audience_validated);
         assert!(report.issuer_validated);
+    }
+}
+
+#[cfg(all(test, not(feature = "crypto-verify")))]
+mod no_crypto_tests {
+    use super::{JwtAlgorithm, JwtVerifyOptions, verify};
+
+    #[test]
+    fn verification_reports_that_it_is_unavailable() {
+        let options = JwtVerifyOptions {
+            secret: Some("secret"),
+            pem_key: None,
+            validate_time: true,
+            leeway: 0,
+            audience: &[],
+            issuer: &[],
+        };
+        let error = verify("a.b.c", JwtAlgorithm::HS256, options)
+            .expect_err("no verifier")
+            .to_string();
+        assert!(error.contains("not available in this build"), "{error}");
     }
 }

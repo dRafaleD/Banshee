@@ -8,16 +8,39 @@ use super::EncodingKind;
 
 const MAX_DECOMPRESSED_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_COMPRESSION_LAYERS: usize = 4;
+/// Single-byte XOR is only attempted on decoded payloads in this size range.
+const MIN_XOR_BYTES: usize = 16;
+const MAX_XOR_BYTES: usize = 64 * 1024;
+const MIN_XOR_TEXT_SCORE: f32 = 0.75;
+/// Repeating-key XOR: key lengths and the payload size searched for them.
+const MAX_REPEATING_XOR_KEY: usize = 16;
+const MAX_REPEATING_XOR_BYTES: usize = 16 * 1024;
+/// Each key byte must be supported by at least this many payload bytes.
+const MIN_BYTES_PER_KEY_BYTE: usize = 12;
+const MIN_UTF16_BYTES: usize = 4;
 
 pub(super) struct DecodeResult {
     pub output: String,
     pub compression_layers: Vec<CompressionLayer>,
+    /// Optional explanation for the outer layer, such as a recovered key.
+    pub detail: Option<String>,
 }
 
+/// A byte-level layer found after an outer text encoding: decompression,
+/// UTF-16LE text, or a single-byte XOR key.
 pub(super) struct CompressionLayer {
     pub kind: EncodingKind,
     pub input_preview: String,
     pub output_preview: String,
+    pub detail: Option<String>,
+    pub confidence: f32,
+}
+
+/// Which byte-level transforms `decode_binary` may try beyond decompression.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BinaryTransforms {
+    CompressionOnly,
+    EncodedPayload,
 }
 
 pub(super) fn decode(kind: EncodingKind, input: &str) -> Option<DecodeResult> {
@@ -29,7 +52,12 @@ pub(super) fn decode(kind: EncodingKind, input: &str) -> Option<DecodeResult> {
             text_result(html_escape::decode_html_entities(input).into_owned())
         }
         EncodingKind::UnicodeEscape => text_result(crate::codec::decode_unicode(input).ok()?),
-        EncodingKind::Gzip | EncodingKind::Zlib => None,
+        EncodingKind::CharCodes
+        | EncodingKind::HexEscape
+        | EncodingKind::StringConcat
+        | EncodingKind::FormatString
+        | EncodingKind::ReversedString => super::script::decode(kind, input),
+        EncodingKind::Gzip | EncodingKind::Zlib | EncodingKind::Utf16Le | EncodingKind::Xor => None,
     }
 }
 
@@ -41,7 +69,7 @@ fn decode_base64(input: &str) -> Option<DecodeResult> {
     [STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD]
         .iter()
         .find_map(|engine| engine.decode(&compact).ok())
-        .and_then(decode_binary)
+        .and_then(|bytes| decode_binary(bytes, BinaryTransforms::EncodedPayload))
 }
 
 fn decode_hex(input: &str) -> Option<DecodeResult> {
@@ -64,7 +92,7 @@ fn decode_hex(input: &str) -> Option<DecodeResult> {
         })
         .collect::<Option<Vec<_>>>()?;
 
-    decode_binary(bytes)
+    decode_binary(bytes, BinaryTransforms::EncodedPayload)
 }
 
 fn decode_url(input: &str) -> Option<String> {
@@ -97,30 +125,194 @@ fn text_result(output: String) -> Option<DecodeResult> {
     Some(DecodeResult {
         output,
         compression_layers: Vec::new(),
+        detail: None,
     })
 }
 
-pub(super) fn decode_binary(mut bytes: Vec<u8>) -> Option<DecodeResult> {
+pub(super) fn decode_binary(
+    mut bytes: Vec<u8>,
+    transforms: BinaryTransforms,
+) -> Option<DecodeResult> {
     let mut compression_layers = Vec::new();
+    let mut xor_applied = false;
     for _ in 0..MAX_COMPRESSION_LAYERS {
-        let Some(kind) = compression_kind(&bytes) else {
+        if let Some(kind) = compression_kind(&bytes) {
+            let input_preview = format!("<{} payload: {} bytes>", kind, bytes.len());
+            bytes = decompress(&bytes, kind)?;
+            let output_preview = String::from_utf8(bytes.clone())
+                .unwrap_or_else(|_| format!("<decompressed binary: {} bytes>", bytes.len()));
+            compression_layers.push(CompressionLayer {
+                kind,
+                input_preview,
+                output_preview,
+                detail: None,
+                confidence: 0.99,
+            });
+            continue;
+        }
+        if transforms == BinaryTransforms::CompressionOnly {
+            break;
+        }
+        if let Some(text) = decode_utf16le(&bytes) {
+            compression_layers.push(CompressionLayer {
+                kind: EncodingKind::Utf16Le,
+                input_preview: format!("<UTF-16LE payload: {} bytes>", bytes.len()),
+                output_preview: text.clone(),
+                detail: None,
+                confidence: 0.95,
+            });
+            return Some(DecodeResult {
+                output: text,
+                compression_layers,
+                detail: None,
+            });
+        }
+        if xor_applied || is_printable_text(&bytes) {
+            break;
+        }
+        let Some((key, decoded, score)) = recover_xor(&bytes) else {
             break;
         };
-        let input_preview = format!("<{} payload: {} bytes>", kind, bytes.len());
-        bytes = decompress(&bytes, kind)?;
-        let output_preview = String::from_utf8(bytes.clone())
-            .unwrap_or_else(|_| format!("<decompressed binary: {} bytes>", bytes.len()));
+        let hex_key = key
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
         compression_layers.push(CompressionLayer {
-            kind,
-            input_preview,
-            output_preview,
+            kind: EncodingKind::Xor,
+            input_preview: format!("<XOR payload: {} bytes>", bytes.len()),
+            output_preview: String::from_utf8_lossy(&decoded).into_owned(),
+            detail: Some(if key.len() == 1 {
+                format!("single-byte key 0x{hex_key}")
+            } else {
+                format!("repeating {}-byte key 0x{hex_key}", key.len())
+            }),
+            confidence: xor_confidence(score),
         });
+        bytes = decoded;
+        xor_applied = true;
     }
     let output = String::from_utf8(bytes).ok()?;
     Some(DecodeResult {
         output,
         compression_layers,
+        detail: None,
     })
+}
+
+/// Confidence that decoded bytes hold a byte-level layer `decode_binary`
+/// would unwrap, so detection and decoding cannot disagree.
+pub(super) fn encoded_payload_confidence(bytes: &[u8]) -> Option<f32> {
+    if compression_kind(bytes).is_some() {
+        return Some(0.99);
+    }
+    if decode_utf16le(bytes).is_some() {
+        return Some(0.95);
+    }
+    if is_printable_text(bytes) {
+        return None;
+    }
+    recover_xor(bytes).map(|(_, _, score)| xor_confidence(score))
+}
+
+fn xor_confidence(score: f32) -> f32 {
+    // Brute-forced keys are heuristic; never report them as certain.
+    (0.5 + score * 0.3).min(0.8)
+}
+
+/// Recognizes little-endian UTF-16 text such as PowerShell `-EncodedCommand`
+/// payloads: a byte-order mark, or ASCII-range text with zero high bytes.
+fn decode_utf16le(bytes: &[u8]) -> Option<String> {
+    let (body, has_bom) = match bytes.strip_prefix(&[0xFF, 0xFE]) {
+        Some(body) => (body, true),
+        None => (bytes, false),
+    };
+    if body.len() < MIN_UTF16_BYTES || !body.len().is_multiple_of(2) {
+        return None;
+    }
+    let (units, _) = body.as_chunks::<2>();
+    if !has_bom {
+        let ascii_units = units
+            .iter()
+            .filter(|unit| unit[1] == 0 && unit[0] != 0)
+            .count();
+        if ascii_units * 10 < units.len() * 9 {
+            return None;
+        }
+    }
+    let text = char::decode_utf16(units.iter().map(|unit| u16::from_le_bytes(*unit)))
+        .collect::<Result<String, _>>()
+        .ok()?;
+    is_printable_text(text.as_bytes()).then_some(text)
+}
+
+fn is_printable_text(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes).is_ok_and(|text| {
+        text.chars()
+            .all(|character| !character.is_control() || matches!(character, '\t' | '\n' | '\r'))
+    })
+}
+
+/// Tries a single-byte key first, then the shortest repeating key whose
+/// output is entirely printable and text-like.
+fn recover_xor(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>, f32)> {
+    if !(MIN_XOR_BYTES..=MAX_XOR_BYTES).contains(&bytes.len()) {
+        return None;
+    }
+    let lengths = 1..=MAX_REPEATING_XOR_KEY.min(bytes.len() / MIN_BYTES_PER_KEY_BYTE);
+    for length in lengths {
+        if length > 1 && bytes.len() > MAX_REPEATING_XOR_BYTES {
+            break;
+        }
+        let Some(key) = (0..length)
+            .map(|column| best_column_key(bytes.iter().skip(column).step_by(length).copied()))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        // An all-zero key would mean the payload is already plain text.
+        if key.iter().all(|byte| *byte == 0) {
+            continue;
+        }
+        let decoded = bytes
+            .iter()
+            .zip(key.iter().cycle())
+            .map(|(byte, key)| byte ^ key)
+            .collect::<Vec<_>>();
+        let text_like = decoded
+            .iter()
+            .filter(|value| value.is_ascii_alphanumeric() || **value == b' ')
+            .count();
+        let score = text_like as f32 / bytes.len() as f32;
+        if score >= MIN_XOR_TEXT_SCORE {
+            return Some((key, decoded, score));
+        }
+    }
+    None
+}
+
+/// Returns the key byte under which every value is printable ASCII and the
+/// values score most like text. Ties keep the lowest key for determinism.
+fn best_column_key(column: impl Iterator<Item = u8> + Clone) -> Option<u8> {
+    let mut best: Option<(u8, usize)> = None;
+    for key in 0..=u8::MAX {
+        let mut text_like = 0;
+        let printable = column.clone().all(|byte| {
+            let value = byte ^ key;
+            // Spaces and lowercase letters dominate text; weighting them stops
+            // a nearby key that maps spaces to digits from scoring higher.
+            text_like += match value {
+                b' ' => 3,
+                b'a'..=b'z' => 2,
+                b'A'..=b'Z' | b'0'..=b'9' => 1,
+                _ => 0,
+            };
+            matches!(value, 0x20..=0x7E | b'\t' | b'\n' | b'\r')
+        });
+        if printable && best.is_none_or(|(_, current)| text_like > current) {
+            best = Some((key, text_like));
+        }
+    }
+    best.map(|(key, _)| key)
 }
 
 pub(super) fn compression_kind(bytes: &[u8]) -> Option<EncodingKind> {
@@ -151,4 +343,102 @@ fn decompress(bytes: &[u8], kind: EncodingKind) -> Option<Vec<u8>> {
         return None;
     }
     Some(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BinaryTransforms, EncodingKind, MAX_XOR_BYTES, decode_binary, decode_url, decode_utf16le,
+        encoded_payload_confidence, recover_xor,
+    };
+
+    fn xor(data: &[u8], key: &[u8]) -> Vec<u8> {
+        data.iter()
+            .zip(key.iter().cycle())
+            .map(|(byte, key)| byte ^ key)
+            .collect()
+    }
+
+    fn text(length: usize) -> Vec<u8> {
+        b"the quick brown fox jumps over the lazy dog 0123456789 "
+            .iter()
+            .copied()
+            .cycle()
+            .take(length)
+            .collect()
+    }
+
+    fn utf16(value: &str) -> Vec<u8> {
+        value.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn url_decoding_handles_plus_escapes_and_truncated_percent() {
+        assert_eq!(decode_url("%41%42+c").as_deref(), Some("AB c"));
+        // A percent sign without two following characters stays literal.
+        assert_eq!(decode_url("100%").as_deref(), Some("100%"));
+        assert_eq!(decode_url("ab%4").as_deref(), Some("ab%4"));
+        assert_eq!(decode_url("%zz"), None);
+    }
+
+    #[test]
+    fn plain_text_payloads_never_gain_an_xor_layer() {
+        // A zero key would "decode" text to itself; it must never be reported.
+        assert!(recover_xor(&text(64)).is_none());
+        let decoded = decode_binary(text(64), BinaryTransforms::EncodedPayload).expect("text");
+        assert!(decoded.compression_layers.is_empty());
+        assert_eq!(encoded_payload_confidence(&text(64)), None);
+    }
+
+    #[test]
+    fn xor_limits_and_confidence_are_enforced() {
+        let plain = text(2_000);
+        // Above 1 KiB but within the 64 KiB and 16 KiB limits.
+        let (key, decoded, score) = recover_xor(&xor(&plain, &[0xa5])).expect("single byte");
+        assert_eq!((key, decoded.as_slice()), (vec![0xa5], plain.as_slice()));
+        assert!(score >= 0.75);
+        let (key, decoded, _) = recover_xor(&xor(&plain, &[0x9c, 0x31, 0xe7])).expect("repeating");
+        assert_eq!(
+            (key, decoded.as_slice()),
+            (vec![0x9c, 0x31, 0xe7], plain.as_slice())
+        );
+        // Repeating keys are only searched up to 16 KiB; single bytes up to 64 KiB.
+        let large = text(20_000);
+        assert!(recover_xor(&xor(&large, &[0x9c, 0x31, 0xe7])).is_none());
+        assert!(recover_xor(&xor(&large, &[0xa5])).is_some());
+        assert!(recover_xor(&xor(&text(MAX_XOR_BYTES + 1), &[0xa5])).is_none());
+
+        let confidence = encoded_payload_confidence(&xor(&plain, &[0xa5])).expect("xor");
+        assert!((0.725..=0.8).contains(&confidence), "{confidence}");
+    }
+
+    #[test]
+    fn utf16_detection_uses_a_90_percent_threshold_and_even_lengths() {
+        assert_eq!(
+            decode_utf16le(&utf16("abcdefghi\u{11f}")).as_deref(),
+            Some("abcdefghi\u{11f}")
+        );
+        assert_eq!(decode_utf16le(&utf16("abcdefgh\u{11f}\u{11f}")), None);
+        let mut odd = utf16("abcdef");
+        odd.push(b'x');
+        assert_eq!(decode_utf16le(&odd), None);
+        assert_eq!(decode_utf16le(&utf16("a")), None);
+        assert_eq!(decode_utf16le(&utf16("ab")).as_deref(), Some("ab"));
+        assert_eq!(
+            encoded_payload_confidence(&utf16("hello world")),
+            Some(0.95)
+        );
+    }
+
+    #[test]
+    fn compression_payloads_are_detected_with_high_confidence() {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(b"compressed text").expect("write");
+        let gzip = encoder.finish().expect("finish");
+        assert_eq!(encoded_payload_confidence(&gzip), Some(0.99));
+        let decoded = decode_binary(gzip, BinaryTransforms::CompressionOnly).expect("gzip");
+        assert_eq!(decoded.output, "compressed text");
+        assert_eq!(decoded.compression_layers[0].kind, EncodingKind::Gzip);
+    }
 }

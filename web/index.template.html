@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network access: connect-src, img-src and every other fetch fall under
+     default-src 'none'. Inline script and WebAssembly compilation are the only
+     allowances; the report frame is sandboxed without scripts. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; frame-src 'self' about:; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Banshee in the browser</title>
+<style>
+:root{--bg:#f7f7f5;--panel:#fff;--text:#1c1d1f;--muted:#5f6368;--line:#e2e2df;--accent:#2f7d5a;--accent-text:#fff;--error:#c53030}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121314;--panel:#1b1c1e;--text:#e8e8e6;--muted:#a0a3a8;--line:#2e3033;--accent:#5fbf8e;--accent-text:#0d1a13;--error:#f07070}}
+:root[data-theme="dark"]{--bg:#121314;--panel:#1b1c1e;--text:#e8e8e6;--muted:#a0a3a8;--line:#2e3033;--accent:#5fbf8e;--accent-text:#0d1a13;--error:#f07070}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:1.5rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:0 0 16px}
+h2{font-size:1.05rem;margin:0 0 12px}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:28px 16px;text-align:center;color:var(--muted);cursor:pointer}
+#drop.over{border-color:var(--accent);color:var(--text)}
+#drop strong{color:var(--text)}
+textarea,input[type=text]{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:13px/1.4 ui-monospace,"Cascadia Mono",Consolas,monospace}
+textarea{min-height:120px;resize:vertical}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+button{background:var(--accent);color:var(--accent-text);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.secondary{background:transparent;color:var(--text);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:default}
+#status{color:var(--muted);min-height:1.5em}
+#status.error{color:var(--error)}
+iframe{width:100%;height:75vh;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:12px 0 0;font:13px/1.45 ui-monospace,"Cascadia Mono",Consolas,monospace}
+details summary{cursor:pointer;color:var(--muted)}
+.note{color:var(--muted);font-size:.9rem;margin:0}
+</style>
+</head>
+<body>
+<main>
+<h1>Banshee in the browser</h1>
+<p class="sub">Analysis runs in this tab with WebAssembly. Files are never uploaded: this page's security policy blocks every network request, and the analysis module imports no browser functions at all.</p>
+
+<section>
+  <h2>Analyze a file</h2>
+  <div id="drop" tabindex="0" role="button" aria-label="Choose a file to analyze"><strong>Drop a file here</strong> or click to choose one (up to 64 MiB)</div>
+  <input id="file" type="file" hidden>
+  <details style="margin-top:12px"><summary>Optional local TOML rules</summary>
+    <textarea id="rules" spellcheck="false" placeholder="version = 1&#10;[[rules]]&#10;id = &quot;marker&quot;&#10;kind = &quot;literal&quot;&#10;pattern = &quot;MZ&quot;"></textarea>
+  </details>
+  <div class="row">
+    <button id="analyze" disabled>Analyze</button>
+    <button id="json" class="secondary" disabled>Download JSON</button>
+    <button id="html" class="secondary" disabled>Download HTML</button>
+    <span id="status" role="status"></span>
+  </div>
+</section>
+
+<section id="report-section" hidden>
+  <h2>Report</h2>
+  <iframe id="report" sandbox title="Banshee report"></iframe>
+</section>
+
+<section>
+  <h2>Decode a value</h2>
+  <input id="value" type="text" spellcheck="false" placeholder="aGVsbG8lMjB3b3JsZA==">
+  <div class="row"><button id="decode" class="secondary">Decode</button></div>
+  <pre id="decoded"></pre>
+</section>
+
+<p class="note">Banshee @VERSION@ browser build. XZ decompression and JWT/X.509 signature verification need native libraries and are unavailable here; use the command-line tool for them. Findings are analyst-assistance signals, not malware verdicts.</p>
+</main>
+<script>
+"use strict";
+const WASM_BASE64 = "@WASM_BASE64@";
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+const $ = (id) => document.getElementById(id);
+let wasm = null;
+let selected = null;
+let lastJson = null;
+let lastHtml = null;
+
+function setStatus(text, isError = false) {
+  $("status").textContent = text;
+  $("status").classList.toggle("error", isError);
+}
+
+function copyIn(bytes) {
+  const pointer = wasm.banshee_alloc(bytes.length);
+  if (!pointer && bytes.length) throw new Error("out of memory");
+  new Uint8Array(wasm.memory.buffer, pointer, bytes.length).set(bytes);
+  return [pointer, bytes.length];
+}
+
+function call(name, ...buffers) {
+  const inputs = buffers.map(copyIn);
+  try {
+    const packed = wasm[name](...inputs.flat());
+    const pointer = Number(packed >> 32n);
+    const length = Number(packed & 0xffffffffn);
+    if (!pointer) throw new Error("out of memory");
+    const text = decoder.decode(new Uint8Array(wasm.memory.buffer, pointer, length).slice());
+    wasm.banshee_free(pointer, length);
+    return text;
+  } finally {
+    for (const [pointer, length] of inputs) wasm.banshee_free(pointer, length);
+  }
+}
+
+function report(bytes, name, rules, format) {
+  const inputs = [bytes, encoder.encode(name), encoder.encode(rules)].map(copyIn);
+  try {
+    const packed = wasm.banshee_report(...inputs.flat(), format);
+    const pointer = Number(packed >> 32n);
+    const length = Number(packed & 0xffffffffn);
+    if (!pointer) throw new Error("out of memory");
+    const text = decoder.decode(new Uint8Array(wasm.memory.buffer, pointer, length).slice());
+    wasm.banshee_free(pointer, length);
+    return text;
+  } finally {
+    for (const [pointer, length] of inputs) wasm.banshee_free(pointer, length);
+  }
+}
+
+function errorOf(text) {
+  if (!text.startsWith('{"error"')) return null;
+  try { return JSON.parse(text).error; } catch { return null; }
+}
+
+function choose(file) {
+  selected = file;
+  $("analyze").disabled = !file || !wasm;
+  $("drop").innerHTML = "";
+  const strong = document.createElement("strong");
+  strong.textContent = file.name;
+  $("drop").append(strong, ` (${file.size.toLocaleString()} bytes) selected. Drop or click to change.`);
+  setStatus("");
+}
+
+async function analyze() {
+  if (!selected) return;
+  if (selected.size > 64 * 1024 * 1024) { setStatus("The browser build accepts files up to 64 MiB.", true); return; }
+  $("analyze").disabled = true;
+  setStatus("Analyzing locally…");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  try {
+    const bytes = new Uint8Array(await selected.arrayBuffer());
+    const rules = $("rules").value;
+    const json = report(bytes, selected.name, rules, 0);
+    const failure = errorOf(json);
+    if (failure) throw new Error(failure);
+    lastJson = json;
+    lastHtml = report(bytes, selected.name, rules, 1);
+    $("report").srcdoc = lastHtml;
+    $("report-section").hidden = false;
+    $("json").disabled = false;
+    $("html").disabled = false;
+    const summary = JSON.parse(json).summary;
+    setStatus(`${summary.total_findings} findings, ${summary.iocs} indicators, ${summary.matched_rules} rule matches.`);
+  } catch (error) {
+    setStatus(String(error.message || error), true);
+  } finally {
+    $("analyze").disabled = false;
+  }
+}
+
+function download(text, type, suffix) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${selected ? selected.name : "banshee"}.${suffix}`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+$("drop").addEventListener("click", () => $("file").click());
+$("drop").addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") $("file").click(); });
+$("file").addEventListener("change", () => { if ($("file").files[0]) choose($("file").files[0]); });
+for (const type of ["dragenter", "dragover"]) $("drop").addEventListener(type, (event) => { event.preventDefault(); $("drop").classList.add("over"); });
+for (const type of ["dragleave", "drop"]) $("drop").addEventListener(type, () => $("drop").classList.remove("over"));
+$("drop").addEventListener("drop", (event) => { event.preventDefault(); if (event.dataTransfer.files[0]) choose(event.dataTransfer.files[0]); });
+$("analyze").addEventListener("click", analyze);
+$("json").addEventListener("click", () => lastJson && download(lastJson, "application/json", "banshee.json"));
+$("html").addEventListener("click", () => lastHtml && download(lastHtml, "text/html", "banshee.html"));
+$("decode").addEventListener("click", () => {
+  if (!wasm) return;
+  const result = JSON.parse(call("banshee_whatis", encoder.encode($("value").value)));
+  const lines = result.layers.map((layer) => `[${layer.depth}] ${layer.kind}${layer.detail ? ` (${layer.detail})` : ""}`);
+  lines.push("", result.final_value);
+  for (const finding of result.findings) lines.push(`- ${finding.kind}: ${finding.value}`);
+  $("decoded").textContent = lines.join("\n");
+});
+
+(async () => {
+  try {
+    const binary = Uint8Array.from(atob(WASM_BASE64), (character) => character.charCodeAt(0));
+    const { instance } = await WebAssembly.instantiate(binary, {});
+    wasm = instance.exports;
+    $("analyze").disabled = !selected;
+  } catch (error) {
+    setStatus(`WebAssembly failed to load: ${error.message || error}`, true);
+  }
+})();
+</script>
+</body>
+</html>

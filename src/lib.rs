@@ -5,9 +5,13 @@ pub mod cert;
 pub mod cli;
 pub mod codec;
 pub mod diff;
+pub mod doctor;
 pub mod evidence;
+pub mod export;
 pub mod file_inspect;
+pub mod fuzzy;
 pub mod hash;
+mod i18n;
 pub mod input;
 pub mod ioc;
 pub mod jwt;
@@ -15,19 +19,34 @@ pub mod output;
 pub mod recipe;
 pub mod regex_tool;
 pub mod report;
+mod report_html;
 pub mod rules;
 pub mod scan;
+mod shell;
+#[cfg(feature = "line-editor")]
+mod shell_complete;
+mod shell_help;
+mod shell_session;
+mod splash;
+mod splash_boot;
+mod splash_portrait;
+mod terminal;
 pub mod timestamp;
+mod tld;
 pub mod watch;
 
+use std::io::IsTerminal as _;
+
 use anyhow::{Context, Result};
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 
 use crate::analysis::Analyzer;
 use crate::cli::{
     CertCommand, Cli, Command, EvidenceCommand, FileCommand, HashCommand, JwtCommand, RegexCommand,
     RulesCommand, TimestampCommand,
 };
+
+const MAX_JWT_KEY_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunOutcome {
@@ -37,11 +56,23 @@ pub enum RunOutcome {
 }
 
 pub fn run() -> Result<RunOutcome> {
-    run_with(Cli::parse())
+    // Bare `banshee` opens the start screen instead of a usage error, then the
+    // interactive console when both ends are a terminal.
+    if std::env::args_os().len() == 1 {
+        splash::print()?;
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            shell::run()?;
+        }
+        return Ok(RunOutcome::Success);
+    }
+    run_with(cli::parse())
 }
 
 pub fn run_with(cli: Cli) -> Result<RunOutcome> {
     let started = std::time::Instant::now();
+    if let Some(language) = cli.lang {
+        i18n::set_turkish(language == cli::Language::Tr);
+    }
     let fail_on_findings = cli.fail_on_findings;
     let verbose = cli.verbose;
     let destination = cli.output.clone();
@@ -93,10 +124,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             JwtCommand::Verify(args) => {
                 let token = input::read(&args.source.input, args.source.file.as_deref())?;
                 let key = match &args.key {
-                    Some(path) => Some(
-                        std::fs::read(path)
-                            .with_context(|| format!("failed to read key '{}'", path.display()))?,
-                    ),
+                    Some(path) => Some(input::read_regular_file_limited(
+                        path,
+                        MAX_JWT_KEY_BYTES,
+                        "JWT key",
+                    )?),
                     None => None,
                 };
                 let report = jwt::verify(
@@ -177,10 +209,24 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     writeln!(output, "{}\t{}", report.algorithm, report.digest)
                 })?;
             }
+            HashCommand::Ssdeep(args) => {
+                let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
+                output::write_line(&fuzzy::ssdeep(&value))?;
+            }
+            HashCommand::CompareSsdeep(args) => {
+                let score = fuzzy::compare(&args.left, &args.right)?;
+                output::write_line(&score.to_string())?;
+            }
             HashCommand::Identify(args) => {
                 let report = hash::identify(&args.value)?;
                 output::print_json_or(&report, args.json, |output| {
-                    writeln!(output, "Length: {} bits", report.bit_length)?;
+                    writeln!(
+                        output,
+                        "{} {} {}",
+                        i18n::t("Length:", "Uzunluk:"),
+                        report.bit_length,
+                        i18n::t("bits", "bit")
+                    )?;
                     for algorithm in &report.probable_algorithms {
                         writeln!(output, "- {algorithm}")?;
                     }
@@ -204,8 +250,19 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 let report = timestamp::to_human(args.value, args.unit)?;
                 output::print_json_or(&report, args.json, |output| {
                     writeln!(output, "UTC: {}", report.utc)?;
-                    writeln!(output, "Unix seconds: {}", report.unix_seconds)?;
-                    writeln!(output, "Detected unit: {}", report.detected_unit)
+                    let label = |english, turkish| i18n::t(english, turkish);
+                    writeln!(
+                        output,
+                        "{} {}",
+                        label("Unix seconds:", "Unix saniye:"),
+                        report.unix_seconds
+                    )?;
+                    writeln!(
+                        output,
+                        "{} {}",
+                        label("Detected unit:", "Algılanan birim:"),
+                        timestamp::unit_label(report.detected_unit)
+                    )
                 })?;
             }
             TimestampCommand::ToUnix(args) => {
@@ -407,6 +464,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                         writeln!(output, "Type: {}", executable.kind)?;
                         writeln!(output, "Entry point: {}", executable.entry_point)?;
                         writeln!(output, "Sections: {}", executable.sections)?;
+                        output::write_pe_metadata(output, executable, "")?;
                         if let Some(endianness) = &executable.endianness {
                             writeln!(output, "Endianness: {endianness}")?;
                         }
@@ -524,6 +582,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                             )?;
                         }
                     }
+                    if let Some(document) = &report.document {
+                        output::write_document(output, document)?;
+                    }
                     for finding in &report.findings {
                         writeln!(output, "Finding: {}", output::terminal_safe(finding))?;
                     }
@@ -562,6 +623,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                                 rule.references.len()
                             )?;
                         }
+                        if !rule.attack.is_empty() {
+                            writeln!(output, "    attack={}", rule.attack.join(","))?;
+                        }
                         if !rule.file_types.is_empty()
                             || rule.min_entropy.is_some()
                             || rule.max_entropy.is_some()
@@ -593,6 +657,25 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     }
                     Ok(())
                 })?;
+            }
+            RulesCommand::ExportYara(args) => {
+                let conversion = rules::yara::export_file(&args.path)?;
+                report_conversion(&conversion, "YARA")?;
+            }
+            RulesCommand::ImportYara(args) => {
+                let conversion = rules::yara::import_file(&args.path)?;
+                if conversion.converted == 0 {
+                    anyhow::bail!(
+                        "no YARA rules could be converted: {}",
+                        conversion
+                            .skipped
+                            .iter()
+                            .map(|rule| format!("{}: {}", rule.rule, rule.reason))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    );
+                }
+                report_conversion(&conversion, "Banshee TOML")?;
             }
             RulesCommand::Scan(args) => {
                 let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
@@ -731,6 +814,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     max_entries: args.max_entries,
                     max_depth: args.max_depth,
                     max_tokens: args.max_tokens,
+                    jobs: usize::from(args.jobs),
                 },
             )?;
             has_findings |= report.summary.total_findings > 0;
@@ -800,6 +884,9 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             let report = diff::compare(&args.left, &args.right)?;
             explicit_findings_status |= report.summary.has_changes;
             diff::print(&report, args.json)?;
+        }
+        Command::Export(args) => {
+            output::with_output(|output| export::export(&args.input, args.format, output))?;
         }
         Command::Encode(args) => {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
@@ -908,7 +995,13 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 std::thread::sleep(std::time::Duration::from_millis(args.interval_ms));
             }
         }
+        Command::Doctor(args) => {
+            let report = doctor::run();
+            has_operational_issues |= !report.healthy;
+            doctor::print(&report, args.json)?;
+        }
         Command::Banner(args) => banner::print(args.compact, args.mask_only)?,
+        Command::Shell => shell::run()?,
         Command::Completions(args) => {
             let mut command = Cli::command();
             output::with_output(|output| {
@@ -944,4 +1037,30 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         );
     }
     Ok(outcome)
+}
+
+/// Writes converted rules and summarizes skipped rules and warnings on stderr.
+fn report_conversion(conversion: &rules::yara::Conversion, target: &str) -> Result<()> {
+    output::with_output(|output| {
+        output
+            .write_all(conversion.output.as_bytes())
+            .context("failed to write converted rules")
+    })?;
+    eprintln!(
+        "converted {} rule(s) to {target}; skipped {}; {} warning(s)",
+        conversion.converted,
+        conversion.skipped.len(),
+        conversion.warnings.len()
+    );
+    for rule in &conversion.skipped {
+        eprintln!(
+            "skipped {}: {}",
+            output::terminal_safe(&rule.rule),
+            output::terminal_safe(&rule.reason)
+        );
+    }
+    for warning in &conversion.warnings {
+        eprintln!("warning: {}", output::terminal_safe(warning));
+    }
+    Ok(())
 }

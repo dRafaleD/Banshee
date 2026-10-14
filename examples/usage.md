@@ -11,6 +11,12 @@ banshee whatis "aGVsbG8lMjB3b3JsZA=="
 echo "Njg2NTZjNmM2Zg==" | banshee whatis
 banshee whatis --file suspicious.txt
 banshee whatis --json "aGVsbG8="
+# UTF-16LE inside Base64, as used by PowerShell -EncodedCommand.
+banshee whatis "VwByAGkAdABlAC0ATwB1AHQAcAB1AHQAIAAxAA=="
+# Script obfuscation is rewritten in place, never executed.
+banshee whatis "\$u=(\"{1}{0}\" -f 'tp://x.example.test','ht'); iex ([char[]](105,101,120) -join '')"
+# Heuristic single-byte XOR inside Base64; the layer reports the key.
+banshee whatis "xsrLy8DG0YXRyoXA3cTI1cnAi9HA1tGFwNPA19yFk5WF1sDGysvB1g=="
 banshee entropy "aGVsbG8gd29ybGQ="
 banshee encode base64 "hello"
 echo 'aGVsbG8=' | banshee decode base64
@@ -61,6 +67,9 @@ cat suspicious.log | banshee analyze --json
 banshee analyze --file suspicious.bin
 banshee encode base64 --file payload.bin
 banshee file inspect suspicious.zip
+banshee file inspect invoice.docm        # macros, remote templates, DDE fields
+banshee file inspect statement.pdf       # JavaScript, actions, /URI targets
+banshee file inspect "Invoice.pdf.lnk"   # target, hidden arguments, icon decoys
 banshee file inspect package.tar.xz --json
 banshee file inspect suspicious.exe
 banshee file inspect application.elf --json
@@ -68,17 +77,27 @@ banshee file inspect application.elf --json
 banshee report suspicious.exe
 banshee report suspicious.zip --format json --output report.json
 banshee report suspicious.bin --rules examples/rules.toml --format markdown --output report.md
+# Offline HTML page: no scripts, no external resources, restrictive CSP.
+banshee report suspicious.bin --rules examples/rules.toml --format html --output report.html
 banshee evidence create suspicious.bin --rules examples/rules.toml --output case-evidence
 banshee evidence verify case-evidence
 # Explicit opt-in only when the original sample must be preserved in the bundle.
 banshee evidence create suspicious.bin --include-sample --output full-evidence
 banshee diff baseline-report.json current-report.json
+banshee hash ssdeep --file suspicious.bin
+banshee hash compare-ssdeep "96:abc...:def..." "96:abd...:def..."   # prints 0-100
 banshee diff baseline-evidence current-evidence --json
+banshee export report.json --format stix --output observables.stix.json
+banshee export case-evidence --format misp --output event.misp.json
+banshee export report.json --format csv
 banshee scan ./samples
 banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --max-file-size 32MiB --max-total-size 512MiB
 banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
+banshee scan ./samples --recursive --jobs 1   # sequential; output is identical
 banshee rules validate examples/rules.toml
+banshee rules export-yara examples/rules.toml --output banshee.yar
+banshee rules import-yara community.yar --output imported.toml
 banshee rules validate examples/rules.toml --json
 cat suspicious.log | banshee rules scan --rules examples/rules.toml
 banshee rules scan --rules examples/rules.toml --file payload.bin --fail-on-findings
@@ -105,4 +124,16 @@ banshee extract --quiet --fail-on-findings --file suspicious.log
 banshee analyze --verbose --format jsonl --file suspicious.log
 banshee completions bash > ~/.local/share/bash-completion/completions/banshee
 banshee manpage > banshee.1
+```
+
+## Developer parser checks
+
+Use synthetic corpus files only. See [the fuzz guide](../fuzz/README.md) for setup
+and reproducing sanitizer findings; the [quality plan](../docs/QUALITY_PLAN.md)
+defines the phase acceptance criteria.
+
+```bash
+cargo test --locked file_inspect::tests
+cargo run --locked --example fuzz_seeds -- fuzz/corpus/file_inspect
+cargo +nightly fuzz run file_inspect -- -max_total_time=60 -timeout=10 -max_len=1048576 -rss_limit_mb=1024
 ```

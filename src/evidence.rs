@@ -283,8 +283,11 @@ pub fn verify(bundle: &Path) -> Result<VerificationReport> {
     if manifest_metadata.len() > MAX_MANIFEST_BYTES {
         bail!("bundle manifest exceeds the 1 MiB safety limit");
     }
-    let manifest_source = fs::read_to_string(&manifest_path)
-        .with_context(|| format!("failed to read manifest '{}'", manifest_path.display()))?;
+    let manifest_source = crate::input::read_regular_text_file_limited(
+        &manifest_path,
+        MAX_MANIFEST_BYTES,
+        "bundle manifest",
+    )?;
     let manifest: BundleManifest =
         serde_json::from_str(&manifest_source).context("invalid evidence manifest JSON")?;
     if manifest.schema_version != BUNDLE_SCHEMA_VERSION {
