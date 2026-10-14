@@ -15,7 +15,6 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
 /// Namespace defined by STIX 2.1 for deterministic cyber-observable identifiers.
 const STIX_NAMESPACE: [u8; 16] = [
@@ -480,15 +479,26 @@ fn csv_field(value: &str) -> String {
 }
 
 fn now_timestamp() -> Result<String> {
-    let now = OffsetDateTime::now_utc();
-    let truncated = now
-        .replace_nanosecond(now.millisecond() as u32 * 1_000_000)
-        .context("invalid timestamp")?;
-    let formatted = truncated
-        .format(&Rfc3339)
-        .context("failed to format timestamp")?;
-    if !formatted.ends_with('Z') {
-        bail!("UTC timestamp did not format with a Z suffix");
+    format_utc_milliseconds(OffsetDateTime::now_utc())
+}
+
+/// `YYYY-MM-DDTHH:MM:SS.mmmZ` with exactly three fractional digits. RFC 3339
+/// formatting drops trailing zeros (`.82Z`), which would make the width vary.
+fn format_utc_milliseconds(moment: OffsetDateTime) -> Result<String> {
+    let utc = moment.to_offset(time::UtcOffset::UTC);
+    let formatted = format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        utc.year(),
+        u8::from(utc.month()),
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second(),
+        utc.millisecond()
+    );
+    // Years outside 0000-9999 would break the fixed width; refuse them.
+    if !(0..=9999).contains(&utc.year()) {
+        bail!("timestamp year is outside 0000-9999");
     }
     Ok(formatted)
 }
@@ -669,6 +679,18 @@ mod tests {
         );
         assert_eq!(lines[7], "url,http://b.example.test/,2,sample.bin");
         assert_eq!(lines.len(), 9);
+    }
+
+    #[test]
+    fn milliseconds_keep_trailing_zeros() {
+        for (nanos, expected) in [
+            (1_704_067_200_820_000_000_i128, "2024-01-01T00:00:00.820Z"),
+            (1_704_067_200_000_000_000, "2024-01-01T00:00:00.000Z"),
+            (1_704_067_201_007_999_999, "2024-01-01T00:00:01.007Z"),
+        ] {
+            let moment = time::OffsetDateTime::from_unix_timestamp_nanos(nanos).expect("instant");
+            assert_eq!(super::format_utc_milliseconds(moment).unwrap(), expected);
+        }
     }
 
     #[test]
