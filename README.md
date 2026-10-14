@@ -67,6 +67,10 @@ are typed without the `banshee` prefix. `banshee shell` opens it directly.
 - `pwd`, `cd`, `ls`, `clear` and `exit` are console built-ins, and a leading
   `/` is optional. Everything else is the normal command line with the same
   flags and output.
+- Type `tr` (or `lang tr`) to switch the console to Turkish and `en` to
+  switch back; set `BANSHEE_LANG=tr` to start in Turkish. The menu, built-in
+  messages and command descriptions are translated; command output and the
+  option text of `help <command>` stay in English.
 - Pipes and scripts are unaffected: without a terminal, bare `banshee` only
   prints the start screen. Builds without the `line-editor` feature (such as
   the browser build) read plain lines and skip Tab completion.

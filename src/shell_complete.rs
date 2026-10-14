@@ -14,7 +14,9 @@ use rustyline::{Context, Helper};
 
 use crate::cli::Cli;
 
-const BUILTINS: &[&str] = &["help", "pwd", "cd", "ls", "clear", "exit", "quit"];
+const BUILTINS: &[&str] = &[
+    "help", "pwd", "cd", "ls", "clear", "lang", "tr", "en", "exit", "quit",
+];
 
 /// Completes the last word of `prefix` (the line up to the cursor). Returns the
 /// byte offset where that word starts and the candidates, or `None` when the
@@ -77,6 +79,14 @@ pub(crate) fn candidates(prefix: &str) -> Option<(usize, Vec<String>)> {
             return Some((start, spaced(matching(names))));
         }
         "cd" | "ls" | "dir" => return None,
+        "lang" => {
+            let languages = if done.len() == 1 {
+                matching(vec!["tr".to_owned(), "en".to_owned()])
+            } else {
+                Vec::new()
+            };
+            return Some((start, spaced(languages)));
+        }
         name if BUILTINS.contains(&name) || name == "cls" || name == "q" => {
             return Some((start, Vec::new()));
         }
@@ -231,5 +241,7 @@ mod tests {
     #[test]
     fn offsets_point_at_the_current_word() {
         assert_eq!(candidates("hash ide").unwrap().0, 5);
+        assert_eq!(words("lang t"), ["tr"]);
+        assert!(words("help dos").contains(&"dosyalar".to_owned()));
     }
 }

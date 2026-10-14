@@ -9,6 +9,7 @@ use anyhow::Result;
 use clap::CommandFactory;
 
 use crate::cli::{Cli, Command};
+use crate::shell_help::t;
 
 /// Source of console lines: the line editor (history, Tab completion) on a
 /// terminal, plain buffered reads for pipes and builds without the editor.
@@ -53,7 +54,7 @@ impl Reader {
         match self {
             Self::Plain { color } => {
                 if *color {
-                    print!("[38;5;46m{}[0m> ", prompt.trim_end_matches("> "));
+                    print!("\x1b[38;5;46m{}\x1b[0m> ", prompt.trim_end_matches("> "));
                 } else {
                     print!("{prompt}");
                 }
@@ -82,15 +83,13 @@ pub fn run() -> Result<()> {
     let color = io::stdout().is_terminal()
         && std::env::var_os("NO_COLOR").is_none()
         && crate::terminal::enable_ansi();
-    println!(
-        "Type a command without the 'banshee' prefix, e.g. whatis aGVsbG8=. 'help' lists commands by category, Tab completes, 'exit' leaves."
-    );
+    println!("{}", welcome());
     let mut reader = Reader::new(color);
     while let Some(line) = reader.read("banshee> ")? {
         let tokens = match tokenize(&line) {
             Ok(tokens) => tokens,
             Err(message) => {
-                eprintln!("error: {message}");
+                eprintln!("{} {message}", t("error:", "hata:"));
                 continue;
             }
         };
@@ -110,22 +109,33 @@ fn execute(tokens: &[String], color: bool) -> bool {
     let name = first.strip_prefix('/').unwrap_or(first);
     let rest = &tokens[1..];
     match name {
-        "exit" | "quit" | "q" => return false,
+        "exit" | "quit" | "q" | "çıkış" | "cikis" => return false,
+        "tr" | "en" => switch_language(name == "tr"),
+        "lang" => match rest.first().map(String::as_str) {
+            Some("tr") => switch_language(true),
+            Some("en") => switch_language(false),
+            _ => eprintln!(
+                "{}",
+                t("error: usage: lang tr|en", "hata: kullanım: lang tr|en")
+            ),
+        },
         "clear" | "cls" => {
             // ANSI clear is skipped on terminals that did not accept ANSI.
             if color {
-                print!("[2J[H");
+                print!("\x1b[2J\x1b[H");
                 let _ = io::stdout().flush();
             }
         }
-        "help" | "?" | "h" => help(rest.first().map(String::as_str), color),
+        "help" | "?" | "h" | "yardım" | "yardim" => {
+            help(rest.first().map(String::as_str), color);
+        }
         "pwd" => match std::env::current_dir() {
             Ok(path) => println!("{}", path.display()),
-            Err(error) => eprintln!("error: {error}"),
+            Err(error) => eprintln!("{} {error}", t("error:", "hata:")),
         },
         "cd" => change_directory(rest),
         "ls" | "dir" => list_directory(rest),
-        "shell" => eprintln!("error: already inside the console"),
+        "shell" => eprintln!("{}", already_inside()),
         _ => {
             let mut arguments = tokens.to_vec();
             arguments[0] = name.to_owned();
@@ -143,23 +153,61 @@ fn help(topic: Option<&str>, color: bool) {
             Some(command) if Cli::command().find_subcommand(command).is_some() => {
                 dispatch(&[command.to_owned(), "--help".to_owned()]);
             }
-            _ => eprintln!("error: {message}"),
+            _ => eprintln!("{} {message}", t("error:", "hata:")),
         },
     }
 }
 
+fn welcome() -> &'static str {
+    t(
+        "Type a command without the 'banshee' prefix, e.g. whatis aGVsbG8=. 'help' lists commands by category, Tab completes, 'tr' switches to Turkish, 'exit' leaves.",
+        "Komutları 'banshee' öneki olmadan yazın, örn. whatis aGVsbG8=. 'help' komutları kategorilere göre listeler, Tab tamamlar, 'en' İngilizceye geçer, 'exit' çıkar.",
+    )
+}
+
+fn already_inside() -> &'static str {
+    t(
+        "error: already inside the console",
+        "hata: konsolun zaten içindesiniz",
+    )
+}
+
+fn switch_language(turkish: bool) {
+    crate::shell_help::set_turkish(turkish);
+    println!(
+        "{}",
+        if turkish {
+            "Dil: Türkçe"
+        } else {
+            "Language: English"
+        }
+    );
+    println!("{}", welcome());
+}
+
 fn change_directory(arguments: &[String]) {
+    let error_label = t("error:", "hata:");
     match arguments {
         [] => match std::env::current_dir() {
             Ok(path) => println!("{}", path.display()),
-            Err(error) => eprintln!("error: {error}"),
+            Err(error) => eprintln!("{error_label} {error}"),
         },
         [target] => {
             if let Err(error) = std::env::set_current_dir(target) {
-                eprintln!("error: cannot change directory to '{target}': {error}");
+                if crate::shell_help::is_turkish() {
+                    eprintln!("hata: '{target}' dizinine geçilemedi: {error}");
+                } else {
+                    eprintln!("error: cannot change directory to '{target}': {error}");
+                }
             }
         }
-        _ => eprintln!("error: usage: cd <directory> (quote paths with spaces)"),
+        _ => eprintln!(
+            "{}",
+            t(
+                "error: usage: cd <directory> (quote paths with spaces)",
+                "hata: kullanım: cd <dizin> (boşluklu yolları tırnak içine alın)",
+            )
+        ),
     }
 }
 
@@ -169,7 +217,11 @@ fn list_directory(arguments: &[String]) {
     let entries = match std::fs::read_dir(target) {
         Ok(entries) => entries,
         Err(error) => {
-            eprintln!("error: cannot list '{target}': {error}");
+            if crate::shell_help::is_turkish() {
+                eprintln!("hata: '{target}' listelenemedi: {error}");
+            } else {
+                eprintln!("error: cannot list '{target}': {error}");
+            }
             return;
         }
     };
@@ -189,7 +241,12 @@ fn list_directory(arguments: &[String]) {
         println!("{name}");
     }
     if total > LIMIT {
-        println!("... {} more not shown", total - LIMIT);
+        let hidden = total - LIMIT;
+        if crate::shell_help::is_turkish() {
+            println!("... {hidden} öğe daha gösterilmedi");
+        } else {
+            println!("... {hidden} more not shown");
+        }
     }
 }
 
@@ -204,7 +261,7 @@ fn dispatch(tokens: &[String]) {
         }
     };
     if matches!(cli.command, Command::Shell) {
-        eprintln!("error: already inside the console");
+        eprintln!("{}", already_inside());
         return;
     }
     if let Err(error) = crate::run_with(cli) {

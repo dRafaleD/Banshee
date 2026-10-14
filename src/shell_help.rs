@@ -1,6 +1,9 @@
-//! Categorized help for the interactive console. Command descriptions come
-//! from the clap definitions, so this menu cannot drift from the real commands;
-//! a test fails when a command is not placed in a category.
+//! Categorized help for the interactive console, in English or Turkish.
+//! English command descriptions come from the clap definitions, so the menu
+//! cannot drift from the real commands; tests fail when a command is missing
+//! from a category or has no Turkish description.
+
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use clap::CommandFactory;
 
@@ -9,9 +12,36 @@ use crate::cli::Cli;
 const RULE_WIDTH: usize = 60;
 const NAME_WIDTH: usize = 20;
 
+const LANG_UNSET: u8 = 0;
+const LANG_EN: u8 = 1;
+const LANG_TR: u8 = 2;
+static LANGUAGE: AtomicU8 = AtomicU8::new(LANG_UNSET);
+
+/// True when the console speaks Turkish. The first call reads `BANSHEE_LANG`
+/// (`tr` or `en`); `set_turkish` changes it afterwards.
+pub(crate) fn is_turkish() -> bool {
+    if LANGUAGE.load(Ordering::Relaxed) == LANG_UNSET {
+        let turkish = std::env::var("BANSHEE_LANG")
+            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("tr"));
+        LANGUAGE.store(if turkish { LANG_TR } else { LANG_EN }, Ordering::Relaxed);
+    }
+    LANGUAGE.load(Ordering::Relaxed) == LANG_TR
+}
+
+pub(crate) fn set_turkish(turkish: bool) {
+    LANGUAGE.store(if turkish { LANG_TR } else { LANG_EN }, Ordering::Relaxed);
+}
+
+/// Picks the English or Turkish text for the current console language.
+pub(crate) fn t<'a>(english: &'a str, turkish: &'a str) -> &'a str {
+    if is_turkish() { turkish } else { english }
+}
+
 struct Category {
     key: &'static str,
+    key_tr: &'static str,
     title: &'static str,
+    title_tr: &'static str,
     commands: &'static [&'static str],
     examples: &'static [&'static str],
 }
@@ -19,7 +49,9 @@ struct Category {
 const CATEGORIES: &[Category] = &[
     Category {
         key: "analysis",
+        key_tr: "analiz",
         title: "ANALYSIS",
+        title_tr: "ANALİZ",
         commands: &["whatis", "entropy", "analyze", "extract", "watch"],
         examples: &[
             "whatis aGVsbG8lMjB3b3JsZA==",
@@ -30,7 +62,9 @@ const CATEGORIES: &[Category] = &[
     },
     Category {
         key: "files",
+        key_tr: "dosyalar",
         title: "FILES & REPORTS",
+        title_tr: "DOSYALAR VE RAPORLAR",
         commands: &["file", "report", "scan", "rules"],
         examples: &[
             "file inspect suspicious.zip",
@@ -40,7 +74,9 @@ const CATEGORIES: &[Category] = &[
     },
     Category {
         key: "encoding",
+        key_tr: "kodlama",
         title: "ENCODING & TOKENS",
+        title_tr: "KODLAMA VE TOKENLAR",
         commands: &[
             "encode",
             "decode",
@@ -61,38 +97,110 @@ const CATEGORIES: &[Category] = &[
     },
     Category {
         key: "case",
+        key_tr: "vaka",
         title: "CASE WORK",
+        title_tr: "VAKA ÇALIŞMASI",
         commands: &["evidence", "diff", "export"],
         examples: &["evidence verify case-evidence"],
     },
     Category {
         key: "system",
+        key_tr: "sistem",
         title: "SYSTEM",
+        title_tr: "SİSTEM",
         commands: &["doctor", "banner", "completions", "manpage"],
         examples: &["doctor", "banner --compact"],
     },
 ];
 
-/// Console built-ins, listed as their own category.
-const CONSOLE: &[(&str, &str)] = &[
-    ("help [topic]", "Show this menu, a category or one command"),
-    ("pwd", "Show the working directory"),
-    ("cd <directory>", "Change the working directory"),
-    ("ls [directory]", "List up to 200 entries"),
-    ("clear", "Clear the screen"),
-    ("exit", "Leave the console (also quit, q)"),
+/// Console built-ins, listed as their own category:
+/// (name, Turkish name, description, Turkish description).
+const CONSOLE: &[(&str, &str, &str, &str)] = &[
+    (
+        "help [topic]",
+        "help [konu]",
+        "Show this menu, a category or one command",
+        "Bu menüyü, bir kategoriyi veya tek bir komutu göster",
+    ),
+    (
+        "pwd",
+        "pwd",
+        "Show the working directory",
+        "Çalışma dizinini göster",
+    ),
+    (
+        "cd <directory>",
+        "cd <dizin>",
+        "Change the working directory",
+        "Çalışma dizinini değiştir",
+    ),
+    (
+        "ls [directory]",
+        "ls [dizin]",
+        "List up to 200 entries",
+        "En fazla 200 öğeyi listele",
+    ),
+    ("clear", "clear", "Clear the screen", "Ekranı temizle"),
+    (
+        "lang tr|en",
+        "lang tr|en",
+        "Switch the console language (tr or en alone also work)",
+        "Konsol dilini değiştir (tek başına tr veya en de olur)",
+    ),
+    (
+        "exit",
+        "exit",
+        "Leave the console (also quit, q)",
+        "Konsoldan çık (quit ve q da olur)",
+    ),
 ];
 
 /// Subcommands that are intentionally not listed in a category.
 #[cfg(test)]
 const UNLISTED: &[&str] = &["shell", "help"];
 
-fn describe(name: &str) -> String {
+fn describe(name: &str, turkish: bool) -> String {
+    if turkish {
+        let text = describe_turkish(name);
+        if !text.is_empty() {
+            return text.to_owned();
+        }
+    }
     Cli::command()
         .find_subcommand(name)
         .and_then(|command| command.get_about())
         .map(ToString::to_string)
         .unwrap_or_default()
+}
+
+fn describe_turkish(name: &str) -> &'static str {
+    match name {
+        "whatis" => "Bilinmeyen bir değeri algıla ve katman katman çöz",
+        "entropy" => "Entropiyi ölç ve bilinmeyen değeri sınıflandır",
+        "analyze" => "Toplu girdideki token ve IOC'leri otomatik analiz et",
+        "extract" => "Metin, dosya veya stdin'den IOC çıkar ve normalleştir",
+        "watch" => "Eklenen log satırlarını izle ve yerelde analiz et",
+        "file" => "Arşivleri, sıkıştırılmış akışları ve yürütülebilir başlıkları çevrimdışı incele",
+        "report" => "Tek bir yerel dosya için birleşik çevrimdışı analiz raporu oluştur",
+        "scan" => "Yerel dosya veya dizini sınırlı çevrimdışı analizle tara",
+        "rules" => "Yerel TOML tespit kurallarını doğrula ve kurallarla tara",
+        "encode" => "Metni seçilen biçimde kodla",
+        "decode" => "Veriyi seçilen biçimden çöz",
+        "recipe" => "Boru (|) ile ayrılmış dönüşüm tarifini yerelde uygula",
+        "hash" => "Özetleri (hash) çevrimdışı hesapla, tanı veya eşleştir",
+        "jwt" => "JSON Web Token'ları hiçbir yere göndermeden incele",
+        "cert" => "Yerel PEM veya DER X.509 sertifikalarını incele",
+        "timestamp" => "Unix zaman damgaları ile okunur UTC zamanı arasında dönüştür",
+        "regex" => "Düzenli ifadeleri test et veya yaygın güvenlik kalıplarını listele",
+        "evidence" => "Deterministik çevrimdışı kanıt paketi oluştur veya doğrula",
+        "diff" => "İki rapor JSON'unu veya doğrulanmış kanıt paketini karşılaştır",
+        "export" => "Kayıtlı rapor gözlemlerini STIX 2.1, MISP veya CSV olarak dışa aktar",
+        "doctor" => "Yerel kurulumu çevrimdışı kontrol et (kodekler, veri, PATH, geçici dizin)",
+        "banner" => "Banshee ASCII afişini ve maske amblemini yazdır",
+        "completions" => "Kabuk tamamlama tanımları üret",
+        "manpage" => "stdout'a roff kılavuz sayfası üret",
+        _ => "",
+    }
 }
 
 fn heading(title: &str, color: bool) -> String {
@@ -123,68 +231,87 @@ fn entry(name: &str, about: &str, color: bool) -> String {
     format!("  {name} {about}")
 }
 
-fn category_lines(category: &Category, color: bool) -> Vec<String> {
-    let mut lines = vec![heading(category.title, color)];
+fn category_lines(category: &Category, color: bool, turkish: bool) -> Vec<String> {
+    let title = if turkish {
+        category.title_tr
+    } else {
+        category.title
+    };
+    let mut lines = vec![heading(title, color)];
     for name in category.commands {
-        lines.push(entry(name, &describe(name), color));
+        lines.push(entry(name, &describe(name, turkish), color));
     }
     lines
 }
 
-fn console_lines(color: bool) -> Vec<String> {
-    let mut lines = vec![heading("CONSOLE", color)];
-    for (name, about) in CONSOLE {
-        lines.push(entry(name, about, color));
+fn console_lines(color: bool, turkish: bool) -> Vec<String> {
+    let mut lines = vec![heading(if turkish { "KONSOL" } else { "CONSOLE" }, color)];
+    for (name, name_tr, about, about_tr) in CONSOLE {
+        if turkish {
+            lines.push(entry(name_tr, about_tr, color));
+        } else {
+            lines.push(entry(name, about, color));
+        }
     }
     lines
 }
 
-fn examples(items: &[&str], color: bool) -> Vec<String> {
-    let mut lines = vec![heading("EXAMPLES", color)];
+fn examples(items: &[&str], color: bool, turkish: bool) -> Vec<String> {
+    let mut lines = vec![heading(
+        if turkish { "ÖRNEKLER" } else { "EXAMPLES" },
+        color,
+    )];
     lines.extend(items.iter().map(|item| format!("  {item}")));
     lines
 }
 
-/// The categorized command list for `banshee --help`.
+/// The categorized command list for `banshee --help` (always English).
 pub(crate) fn command_menu(color: bool) -> String {
     CATEGORIES
         .iter()
-        .map(|category| {
-            category_lines(category, color).join(
-                "
-",
-            )
-        })
+        .map(|category| category_lines(category, color, false).join("\n"))
         .collect::<Vec<_>>()
-        .join(
-            "
-
-",
-        )
+        .join("\n\n")
 }
 
-/// Help topic names: the categories plus the console built-ins.
+/// Help topic names in both languages, for completion.
 pub(crate) fn topic_keys() -> impl Iterator<Item = &'static str> {
     CATEGORIES
         .iter()
-        .map(|category| category.key)
-        .chain(std::iter::once("console"))
+        .flat_map(|category| [category.key, category.key_tr])
+        .chain(["console", "konsol"])
 }
 
-fn topics() -> String {
-    topic_keys().collect::<Vec<_>>().join(" · ")
+fn topics(turkish: bool) -> String {
+    CATEGORIES
+        .iter()
+        .map(|category| {
+            if turkish {
+                category.key_tr
+            } else {
+                category.key
+            }
+        })
+        .chain(std::iter::once(if turkish { "konsol" } else { "console" }))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
-/// Renders the full menu, or one category. `Err` carries a one-line message for
-/// an unknown topic; the caller may then try the word as a command name.
+/// Renders the full menu, or one category, in the current console language.
+/// `Err` carries a one-line message for an unknown topic; the caller may then
+/// try the word as a command name.
 pub(crate) fn render(topic: Option<&str>, color: bool) -> Result<String, String> {
+    render_in(topic, color, is_turkish())
+}
+
+fn render_in(topic: Option<&str>, color: bool, turkish: bool) -> Result<String, String> {
     let mut sections: Vec<Vec<String>> = Vec::new();
     match topic.map(str::to_ascii_lowercase).as_deref() {
         None => {
             for category in CATEGORIES {
-                sections.push(category_lines(category, color));
+                sections.push(category_lines(category, color, turkish));
             }
-            sections.push(console_lines(color));
+            sections.push(console_lines(color, turkish));
             sections.push(examples(
                 &[
                     "whatis aGVsbG8=",
@@ -192,30 +319,52 @@ pub(crate) fn render(topic: Option<&str>, color: bool) -> Result<String, String>
                     "report sample.bin --format json",
                 ],
                 color,
+                turkish,
             ));
-            sections.push(
+            let footer = if turkish {
                 [
-                    format!("Topics: {}", topics()),
+                    format!("Konular: {}", topics(true)),
+                    "help <konu> bir kategoriyi, help <komut> komutun seçeneklerini gösterir."
+                        .to_owned(),
+                    "Komutlar 'banshee' öneki olmadan, komut satırındakiyle aynı çalışır; \
+                     komut çıktıları ve seçenek açıklamaları İngilizce kalır."
+                        .to_owned(),
+                ]
+            } else {
+                [
+                    format!("Topics: {}", topics(false)),
                     "help <topic> lists one category; help <command> shows a command's options."
                         .to_owned(),
                     "Commands work exactly as on the command line, without the 'banshee' prefix."
                         .to_owned(),
                 ]
-                .iter()
-                .map(|line| dim(line, color))
-                .collect(),
-            );
+            };
+            sections.push(footer.iter().map(|line| dim(line, color)).collect());
         }
-        Some("console") => {
-            sections.push(console_lines(color));
-            sections.push(examples(&["cd samples", "ls", "report sample.bin"], color));
+        Some("console" | "konsol") => {
+            sections.push(console_lines(color, turkish));
+            sections.push(examples(
+                &["cd samples", "ls", "report sample.bin"],
+                color,
+                turkish,
+            ));
         }
         Some(key) => {
-            let Some(category) = CATEGORIES.iter().find(|category| category.key == key) else {
-                return Err(format!("unknown help topic '{key}'; topics: {}", topics()));
+            let Some(category) = CATEGORIES
+                .iter()
+                .find(|category| category.key == key || category.key_tr == key)
+            else {
+                return Err(if turkish {
+                    format!(
+                        "bilinmeyen yardım konusu '{key}'; konular: {}",
+                        topics(true)
+                    )
+                } else {
+                    format!("unknown help topic '{key}'; topics: {}", topics(false))
+                });
             };
-            sections.push(category_lines(category, color));
-            sections.push(examples(category.examples, color));
+            sections.push(category_lines(category, color, turkish));
+            sections.push(examples(category.examples, color, turkish));
         }
     }
     Ok(sections
@@ -246,10 +395,17 @@ mod tests {
     }
 
     #[test]
-    fn categories_list_only_real_commands_with_descriptions() {
+    fn categories_list_only_real_commands_with_both_descriptions() {
         for category in CATEGORIES {
             for name in category.commands {
-                assert!(!describe(name).is_empty(), "'{name}' has no description");
+                assert!(
+                    !describe(name, false).is_empty(),
+                    "'{name}' has no description"
+                );
+                assert!(
+                    !describe_turkish(name).is_empty(),
+                    "'{name}' has no Turkish description"
+                );
             }
         }
     }
@@ -260,22 +416,44 @@ mod tests {
         for category in CATEGORIES {
             assert!(menu.contains(category.title));
         }
-        assert!(!menu.contains("CONSOLE") && !menu.contains(''));
+        assert!(!menu.contains("CONSOLE") && !menu.contains('\x1b'));
     }
 
     #[test]
     fn overview_and_topics_render_without_color_codes() {
-        let overview = render(None, false).unwrap();
+        let overview = render_in(None, false, false).unwrap();
         assert!(overview.contains("ANALYSIS") && overview.contains("CONSOLE"));
         assert!(!overview.contains('\x1b'));
-        assert!(render(Some("FILES"), false).unwrap().contains("report"));
         assert!(
-            render(Some("console"), false)
+            render_in(Some("FILES"), false, false)
+                .unwrap()
+                .contains("report")
+        );
+        assert!(
+            render_in(Some("console"), false, false)
                 .unwrap()
                 .contains("cd <directory>")
         );
-        assert!(render(Some("nonsense"), false).is_err());
-        let colored = render(None, true).unwrap();
-        assert!(colored.contains("[1;38;5;46mANALYSIS") && colored.contains("[38;5;65m"));
+        assert!(render_in(Some("nonsense"), false, false).is_err());
+        let colored = render_in(None, true, false).unwrap();
+        assert!(colored.contains("\x1b[1;38;5;46mANALYSIS") && colored.contains("\x1b[38;5;65m"));
+    }
+
+    #[test]
+    fn turkish_menu_uses_turkish_titles_descriptions_and_topic_names() {
+        let overview = render_in(None, false, true).unwrap();
+        assert!(overview.contains("ANALİZ") && overview.contains("KONSOL"));
+        assert!(overview.contains("ÖRNEKLER") && overview.contains("Konular:"));
+        assert!(overview.contains("Bilinmeyen bir değeri algıla"));
+        assert!(!overview.contains("ANALYSIS"));
+        // Both spellings open the same category.
+        let by_turkish_key = render_in(Some("dosyalar"), false, true).unwrap();
+        assert!(by_turkish_key.contains("DOSYALAR VE RAPORLAR"));
+        assert!(render_in(Some("files"), false, true).is_ok());
+        assert!(
+            render_in(Some("zzz"), false, true)
+                .unwrap_err()
+                .contains("bilinmeyen")
+        );
     }
 }
