@@ -5,6 +5,8 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-14
+
 ### Added
 
 - Interactive console: `banshee` on a terminal (or `banshee shell`) opens a `banshee>` prompt that runs commands without the `banshee` prefix, with a categorized `help` menu (`help <category>`, `help <command>`), `pwd`/`cd`/`ls`, `clear` and `exit`. Tab completion and line history use the optional `line-editor` feature (on by default, off for the browser build). `banshee --help` lists commands in the same categories.
