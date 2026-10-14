@@ -64,7 +64,7 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 url = "2.5"
 x509-parser = "0.18"
 xz2 = { version = "0.1", optional = true }
-zip = { version = "7.2", default-features = false, features = ["deflate"] }
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
 rustyline = { version = "18.0.1", default-features = false, optional = true }
 
 [dev-dependencies]
