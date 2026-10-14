@@ -39,6 +39,8 @@ Development guides: [installation](docs/INSTALLATION.md),
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
 | Share observables with other tools | `export` | STIX 2.1, MISP event JSON or CSV |
+| Work interactively | `banshee`, `shell` | A `banshee>` console with categorized help and Tab completion |
+| Check your installation | `doctor` | Offline report on codecs, bundled data, PATH and temp directory |
 
 Output formats vary by command. Use `banshee <command> --help` for supported
 formats and limits. Findings are triage signals; review them before acting.
@@ -48,6 +50,30 @@ formats and limits. Findings are triage signals; review them before acting.
 Run `banshee` without arguments for a start screen: a green-on-black emblem,
 a summary of what this build supports, and common commands. Colors appear only
 in interactive terminals and respect `NO_COLOR`.
+
+### Interactive console
+
+On a terminal the start screen leads into an interactive console, so commands
+are typed without the `banshee` prefix. `banshee shell` opens it directly.
+
+<img src="assets/banshee-console-session.png" alt="Banshee console running whatis, hash identify and timestamp to-human" width="100%">
+
+- `help` groups every command by category (analysis, files and reports,
+  encoding and tokens, case work, system); `help <category>` or
+  `help <command>` goes deeper.
+- Tab completes commands, subcommands, `--flags`, flag values such as
+  `--format`, and file paths. Up and Down recall earlier lines; history stays
+  in memory and is never written to disk.
+- `pwd`, `cd`, `ls`, `clear` and `exit` are console built-ins, and a leading
+  `/` is optional. Everything else is the normal command line with the same
+  flags and output.
+- Pipes and scripts are unaffected: without a terminal, bare `banshee` only
+  prints the start screen. Builds without the `line-editor` feature (such as
+  the browser build) read plain lines and skip Tab completion.
+
+<img src="assets/banshee-console-help.png" alt="The categorized help menu of the Banshee console" width="100%">
+
+### First commands
 
 Try a harmless decoding example after building:
 
