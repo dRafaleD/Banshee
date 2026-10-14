@@ -293,6 +293,7 @@ pub(crate) fn command_menu(color: bool) -> String {
 }
 
 /// Help topic names in both languages, for completion.
+#[cfg(feature = "line-editor")]
 pub(crate) fn topic_keys() -> impl Iterator<Item = &'static str> {
     CATEGORIES
         .iter()

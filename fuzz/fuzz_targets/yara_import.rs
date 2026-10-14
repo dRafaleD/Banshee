@@ -14,6 +14,11 @@ fuzz_target!(|data: &[u8]| {
         if conversion.converted > 0 {
             banshee::rules::validate_source(&conversion.output).expect("import output validates");
         }
-        assert!(conversion.skipped.iter().all(|rule| !rule.reason.is_empty()));
+        assert!(
+            conversion
+                .skipped
+                .iter()
+                .all(|rule| !rule.reason.is_empty())
+        );
     }
 });

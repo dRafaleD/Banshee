@@ -396,8 +396,10 @@ fn ole_directory_names(bytes: &[u8]) -> Result<Vec<String>> {
         let index = read_u32(bytes, 0x4C + slot * 4, true).context("truncated DIFAT")?;
         let data = sector(index).context("FAT sector outside file")?;
         fat.extend(
-            data.chunks_exact(4)
-                .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("4-byte chunk"))),
+            data.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|chunk| u32::from_le_bytes(*chunk)),
         );
         if fat.len() > MAX_OLE_SECTORS {
             bail!("FAT exceeds the sector limit");
@@ -412,15 +414,17 @@ fn ole_directory_names(bytes: &[u8]) -> Result<Vec<String>> {
             bail!("directory chain loops or is too long");
         }
         let data = sector(current).context("directory sector outside file")?;
-        for entry in data.chunks_exact(128) {
+        for entry in data.as_chunks::<128>().0 {
             let name_bytes = usize::from(read_u16(entry, 0x40, true).unwrap_or(0));
             let object_type = entry[0x42];
             if object_type == 0 || !(2..=64).contains(&name_bytes) {
                 continue;
             }
             let units = entry[..name_bytes - 2]
-                .chunks_exact(2)
-                .map(|unit| u16::from_le_bytes([unit[0], unit[1]]));
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|unit| u16::from_le_bytes(*unit));
             names.push(
                 char::decode_utf16(units)
                     .map(|unit| unit.unwrap_or('\u{FFFD}'))
@@ -649,8 +653,10 @@ pub(super) fn inspect_lnk(bytes: &[u8]) -> Result<DocumentReport> {
             .with_context(|| format!("shortcut {name} exceeds the file"))?;
         let value = if unicode {
             char::decode_utf16(
-                data.chunks_exact(2)
-                    .map(|unit| u16::from_le_bytes([unit[0], unit[1]])),
+                data.as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|unit| u16::from_le_bytes(*unit)),
             )
             .map(|unit| unit.unwrap_or('\u{FFFD}'))
             .collect::<String>()
@@ -742,8 +748,10 @@ fn link_info_base_path(info: &[u8]) -> Option<String> {
     {
         let units = info
             .get(offset as usize..)?
-            .chunks_exact(2)
-            .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_le_bytes(*unit))
             .take_while(|unit| *unit != 0)
             .take(MAX_PROPERTY_CHARS);
         return Some(
