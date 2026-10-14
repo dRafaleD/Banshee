@@ -16,7 +16,7 @@ fn implicit_arguments(command: &str) -> Option<&'static [&'static str]> {
         "report" | "scan" => &[],
         "file" => &["inspect"],
         "cert" => &["inspect"],
-        "entropy" | "whatis" | "analyze" | "extract" => &["--file"],
+        "entropy" | "whatis" | "analyze" | "extract" | "strings" => &["--file"],
         _ => return None,
     })
 }

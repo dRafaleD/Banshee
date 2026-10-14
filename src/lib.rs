@@ -30,6 +30,7 @@ mod shell_session;
 mod splash;
 mod splash_boot;
 mod splash_portrait;
+pub mod strings;
 mod terminal;
 pub mod timestamp;
 mod tld;
@@ -114,6 +115,48 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
             let report = analysis::entropy::analyze_bytes(&value);
             output::print_entropy_report(&report, args.json)?;
+        }
+        Command::Strings(args) => {
+            let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
+            let report = strings::extract(
+                &value,
+                strings::StringsOptions {
+                    min_length: usize::from(args.min_length),
+                    encoding: args.encoding,
+                    max_strings: args.max_strings as usize,
+                },
+            );
+            output::print_json_or(&report, args.json, |output| {
+                for found in &report.strings {
+                    let value = output::terminal_safe(&found.value);
+                    if args.plain {
+                        writeln!(output, "{value}")?;
+                    } else {
+                        writeln!(
+                            output,
+                            "{:#010x}  {:<7}  {value}",
+                            found.offset,
+                            found.encoding.to_string()
+                        )?;
+                    }
+                }
+                Ok(())
+            })?;
+            if report.truncated && !args.json {
+                if i18n::is_turkish() {
+                    eprintln!(
+                        "not: {} dizgenin {} tanesi listelendi; daha fazlası için --max-strings değerini artırın",
+                        report.total,
+                        report.strings.len()
+                    );
+                } else {
+                    eprintln!(
+                        "note: listed {} of {} strings; raise --max-strings to see more",
+                        report.strings.len(),
+                        report.total
+                    );
+                }
+            }
         }
         Command::Jwt(args) => match args.command {
             JwtCommand::Inspect(args) => {

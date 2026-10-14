@@ -168,6 +168,8 @@ pub enum Command {
     Cert(CertArgs),
     /// Inspect archives, compressed streams, and executable headers offline
     File(FileArgs),
+    /// Extract printable ASCII and UTF-16LE strings with their offsets
+    Strings(StringsArgs),
     /// Validate and scan with local TOML detection rules
     Rules(RulesArgs),
     /// Automatically analyze tokens and IOCs in bulk input
@@ -552,6 +554,32 @@ pub struct CertChainArgs {
     /// PEM bundle in leaf-to-root order, or a single DER certificate
     pub path: PathBuf,
 
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct StringsArgs {
+    #[command(flatten)]
+    pub source: SourceArgs,
+
+    /// Minimum string length in characters
+    #[arg(short = 'n', long, default_value_t = 4, value_parser = clap::value_parser!(u16).range(1..=1024))]
+    pub min_length: u16,
+
+    /// Encodings to search for
+    #[arg(long, value_enum, default_value_t = crate::strings::EncodingChoice::All)]
+    pub encoding: crate::strings::EncodingChoice,
+
+    /// Maximum strings to list; the total is still counted
+    #[arg(long, default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=1_000_000))]
+    pub max_strings: u32,
+
+    /// Print only the strings, one per line, without offsets
+    #[arg(long, conflicts_with = "json")]
+    pub plain: bool,
+
+    /// Emit machine-readable JSON
     #[arg(long)]
     pub json: bool,
 }

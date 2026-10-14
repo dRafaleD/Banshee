@@ -46,6 +46,41 @@ fn banner_prints_wordmark_and_mask_silhouette() {
 }
 
 #[test]
+fn strings_lists_ascii_and_utf16_with_offsets() {
+    let path = temp_fixture("strings.bin");
+    let mut data = b"\x00\x01http://evil.example.test/a\x00\xff".to_vec();
+    data.extend("WideName".encode_utf16().flat_map(u16::to_le_bytes));
+    std::fs::write(&path, &data).expect("write fixture");
+
+    let mut text = Command::cargo_bin("banshee").expect("binary");
+    text.args(["strings", "--file"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "0x00000002  ascii    http://evil.example.test/a",
+        ))
+        .stdout(predicate::str::contains("utf16le  WideName"));
+
+    let mut plain = Command::cargo_bin("banshee").expect("binary");
+    plain
+        .args(["strings", "--plain", "--encoding", "utf16le", "--file"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout("WideName\n");
+
+    let mut bounded = Command::cargo_bin("banshee").expect("binary");
+    bounded
+        .args(["strings", "--max-strings", "1", "--file"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("listed 1 of 2 strings"));
+    std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
 fn lang_tr_translates_labels_but_not_machine_readable_output() {
     let mut turkish = Command::cargo_bin("banshee").expect("binary");
     turkish
