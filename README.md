@@ -45,6 +45,10 @@ formats and limits. Findings are triage signals; review them before acting.
 
 ## Quick guide
 
+Run `banshee` without arguments for a start screen: a green-on-black emblem,
+a summary of what this build supports, and common commands. Colors appear only
+in interactive terminals and respect `NO_COLOR`.
+
 Try a harmless decoding example after building:
 
 ```text

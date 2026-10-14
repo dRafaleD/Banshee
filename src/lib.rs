@@ -21,6 +21,7 @@ pub mod report;
 mod report_html;
 pub mod rules;
 pub mod scan;
+mod splash;
 pub mod timestamp;
 mod tld;
 pub mod watch;
@@ -44,6 +45,11 @@ pub enum RunOutcome {
 }
 
 pub fn run() -> Result<RunOutcome> {
+    // Bare `banshee` opens the start screen instead of a usage error.
+    if std::env::args_os().len() == 1 {
+        splash::print()?;
+        return Ok(RunOutcome::Success);
+    }
     run_with(Cli::parse())
 }
 

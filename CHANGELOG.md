@@ -101,6 +101,9 @@ changes must be called out explicitly. Tags are immutable.
   signatures report `unsupported`; `doctor` lists which are built in.
 - `report::generate_from_bytes` builds reports from memory with file or
   inline rule sources.
+- Running `banshee` without arguments shows a neofetch-style start screen
+  (green-on-black emblem, build summary and quick-start commands) instead of a
+  usage error. Plain text is used for pipes and when `NO_COLOR` is set.
 - In-memory `cert::inspect_bytes`/`inspect_chain_bytes` and
   `rules::validate_source`/`scan_source` library entry points.
 - Eight additional fuzz targets: content analysis, IOC extraction, rule
