@@ -15,6 +15,7 @@ or broken invariants. Samples are never loaded or executed.
 | `report_compat` | `report::validate_compatibility` | only schema version 1 is accepted |
 | `recipe` | `recipe::run` | step limit; reported size matches output |
 | `codec_roundtrip` | `codec::encode_bytes`, `decode` | binary-safe codecs round-trip exactly |
+| `yara_import` | `rules::yara::import_source` | converted rules always validate; skipped rules carry a reason |
 
 `rules_scan` splits its input at the first `0x00` byte (rule TOML, then content);
 `recipe` splits at the first newline (recipe expression, then input bytes).

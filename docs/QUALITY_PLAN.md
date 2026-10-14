@@ -94,3 +94,23 @@ unchanged. GitHub's expanded schedules activate only after merge to master.
 
 Follow-up work discovered during a phase belongs in its result notes or the next
 phase; do not silently expand into all six phases at once.
+
+## Hardening cycle (2026-10-12 to 2026-10-14)
+
+Local verification on Windows with Ubuntu/WSL for sanitizer fuzzing. These are
+bounded runs, not exhaustive coverage.
+
+- Fuzzing: ten cargo-fuzz targets with AddressSanitizer, five minutes each with
+  a retained corpus, about 64 million executions in total and no failures.
+  Earlier short runs found two panics, both fixed with regression tests:
+  Unicode escape decoding split a UTF-8 sequence (`codec_roundtrip`), and YARA
+  condition splitting sliced inside a multi-byte character (`yara_import`).
+- Mutation testing: cargo-mutants on the ssdeep, decoder, script, YARA, PE
+  metadata, TLD and export modules (library tests only). Missed mutants led to
+  golden ssdeep vectors, decoder limit and confidence tests, direct export
+  tests, TLD snapshot checks, and a guard against reporting an all-zero XOR
+  key. A full rerun after these changes is still pending.
+- Cross-checks: imphash and TLS callback counts matched pefile on 300 local
+  Windows system binaries; ssdeep digests matched an independent
+  implementation on 426 of 427 inputs (the remaining one-byte case follows
+  ssdeep's C source).
