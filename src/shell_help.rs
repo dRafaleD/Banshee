@@ -101,7 +101,16 @@ fn heading(title: &str, color: bool) -> String {
     } else {
         title.to_owned()
     };
-    format!("{title}\n{}", "─".repeat(RULE_WIDTH))
+    format!("{title}\n{}", dim(&"─".repeat(RULE_WIDTH), color))
+}
+
+/// Muted green used for rules and footnotes.
+fn dim(text: &str, color: bool) -> String {
+    if color {
+        format!("\x1b[38;5;65m{text}\x1b[0m")
+    } else {
+        text.to_owned()
+    }
 }
 
 fn entry(name: &str, about: &str, color: bool) -> String {
@@ -166,13 +175,18 @@ pub(crate) fn render(topic: Option<&str>, color: bool) -> Result<String, String>
                 ],
                 color,
             ));
-            sections.push(vec![
-                format!("Topics: {}", topics()),
-                "help <topic> lists one category; help <command> shows a command's options."
-                    .to_owned(),
-                "Commands work exactly as on the command line, without the 'banshee' prefix."
-                    .to_owned(),
-            ]);
+            sections.push(
+                [
+                    format!("Topics: {}", topics()),
+                    "help <topic> lists one category; help <command> shows a command's options."
+                        .to_owned(),
+                    "Commands work exactly as on the command line, without the 'banshee' prefix."
+                        .to_owned(),
+                ]
+                .iter()
+                .map(|line| dim(line, color))
+                .collect(),
+            );
         }
         Some("console") => {
             sections.push(console_lines(color));
@@ -234,5 +248,7 @@ mod tests {
                 .contains("cd <directory>")
         );
         assert!(render(Some("nonsense"), false).is_err());
+        let colored = render(None, true).unwrap();
+        assert!(colored.contains("[1;38;5;46mANALYSIS") && colored.contains("[38;5;65m"));
     }
 }
