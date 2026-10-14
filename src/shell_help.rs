@@ -145,6 +145,24 @@ fn examples(items: &[&str], color: bool) -> Vec<String> {
     lines
 }
 
+/// The categorized command list for `banshee --help`.
+pub(crate) fn command_menu(color: bool) -> String {
+    CATEGORIES
+        .iter()
+        .map(|category| {
+            category_lines(category, color).join(
+                "
+",
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+
+",
+        )
+}
+
 /// Help topic names: the categories plus the console built-ins.
 pub(crate) fn topic_keys() -> impl Iterator<Item = &'static str> {
     CATEGORIES
@@ -234,6 +252,15 @@ mod tests {
                 assert!(!describe(name).is_empty(), "'{name}' has no description");
             }
         }
+    }
+
+    #[test]
+    fn command_menu_lists_every_category() {
+        let menu = command_menu(false);
+        for category in CATEGORIES {
+            assert!(menu.contains(category.title));
+        }
+        assert!(!menu.contains("CONSOLE") && !menu.contains(''));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 use std::io::{self, BufRead as _, IsTerminal as _, Write as _};
 
 use anyhow::Result;
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 
 use crate::cli::{Cli, Command};
 
@@ -195,7 +195,7 @@ fn list_directory(arguments: &[String]) {
 
 fn dispatch(tokens: &[String]) {
     let arguments = std::iter::once("banshee".to_owned()).chain(tokens.iter().cloned());
-    let cli = match Cli::try_parse_from(arguments) {
+    let cli = match crate::cli::try_parse_from(arguments) {
         Ok(cli) => cli,
         Err(error) => {
             // Help and usage errors print themselves; the console keeps going.

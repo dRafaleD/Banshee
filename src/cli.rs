@@ -1,6 +1,29 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
+
+/// The command definition with the categorized command menu in its help.
+pub fn command() -> clap::Command {
+    let interactive = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let color =
+        interactive && std::env::var_os("NO_COLOR").is_none() && crate::terminal::enable_ansi();
+    Cli::command().before_help(crate::shell_help::command_menu(color))
+}
+
+/// Parses `arguments` (starting with the program name) with that definition.
+pub fn try_parse_from<I, T>(arguments: I) -> Result<Cli, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    Cli::from_arg_matches(&command().try_get_matches_from(arguments)?)
+}
+
+/// Parses the process arguments, printing help or errors and exiting like clap.
+pub fn parse() -> Cli {
+    let matches = command().get_matches();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -8,6 +31,13 @@ use clap::{Args, Parser, Subcommand};
     version,
     about = "Offline, pipe-friendly security analysis toolkit",
     long_about = None,
+    help_template = "{about-with-newline}
+{usage-heading} {usage}
+
+{before-help}
+Options:
+{options}
+{after-help}",
     after_help = "QUICK START:\n  banshee whatis aGVsbG8=\n  banshee extract --file application.log --defang\n  banshee report sample.bin --format json\n  banshee evidence verify case-evidence\n\nUse banshee <command> --help for inputs, formats, and limits.\nExit codes: 0 = success; 1 = findings/differences/failed integrity; 2 = operational error.\nFindings normally require --fail-on-findings; diff and evidence verify use status 1 directly."
 )]
 pub struct Cli {

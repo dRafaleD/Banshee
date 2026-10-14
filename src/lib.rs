@@ -36,7 +36,7 @@ pub mod watch;
 use std::io::IsTerminal as _;
 
 use anyhow::{Context, Result};
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 
 use crate::analysis::Analyzer;
 use crate::cli::{
@@ -63,7 +63,7 @@ pub fn run() -> Result<RunOutcome> {
         }
         return Ok(RunOutcome::Success);
     }
-    run_with(Cli::parse())
+    run_with(cli::parse())
 }
 
 pub fn run_with(cli: Cli) -> Result<RunOutcome> {
