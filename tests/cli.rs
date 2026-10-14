@@ -32,8 +32,8 @@ fn banner_prints_wordmark_and_mask_silhouette() {
         .arg("banner")
         .assert()
         .success()
-        .stdout(predicate::str::contains("BBBB"))
-        .stdout(predicate::str::contains("(  )"))
+        .stdout(predicate::str::contains("|____/"))
+        .stdout(predicate::str::contains("⣿"))
         .stdout(predicate::str::contains("OFFLINE SECURITY"));
 
     let mut compact = Command::cargo_bin("banshee").expect("binary");
@@ -41,8 +41,8 @@ fn banner_prints_wordmark_and_mask_silhouette() {
         .args(["banner", "--compact"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("BBBB"))
-        .stdout(predicate::str::contains(".============").not());
+        .stdout(predicate::str::contains("|____/"))
+        .stdout(predicate::str::contains("⣿").not());
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn output_requires_force_before_overwriting() {
     assert!(
         std::fs::read_to_string(&path)
             .expect("read replaced output")
-            .contains("BBBB")
+            .contains("|____/")
     );
     std::fs::remove_file(path).expect("remove output");
 }

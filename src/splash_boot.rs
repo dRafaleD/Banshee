@@ -42,7 +42,7 @@ pub(crate) enum Tone {
 }
 
 impl Tone {
-    fn color(self) -> (u8, u8, u8) {
+    pub(crate) fn color(self) -> (u8, u8, u8) {
         match self {
             Self::Brand => (68, 210, 0),
             Self::Portrait => (57, 190, 0),
@@ -105,11 +105,11 @@ fn pad(text: &str, width: usize) -> String {
     }
 }
 
-fn wordmark() -> Vec<String> {
+pub(crate) fn wordmark() -> Vec<String> {
     WORDMARK.iter().map(|row| (*row).to_owned()).collect()
 }
 
-fn portrait(rows: usize) -> &'static [&'static str] {
+pub(crate) fn portrait(rows: usize) -> &'static [&'static str] {
     PORTRAITS
         .iter()
         .rev()

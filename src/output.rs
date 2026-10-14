@@ -154,6 +154,11 @@ pub fn configure_color(mode: ColorMode, no_color: bool) {
     COLOR_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
+/// Whether human-readable output may use colors (see `configure_color`).
+pub(crate) fn color_enabled() -> bool {
+    COLOR_ENABLED.load(Ordering::Relaxed)
+}
+
 pub fn selected_format(format: Option<OutputFormat>, json: bool) -> OutputFormat {
     format.unwrap_or(if json {
         OutputFormat::Json
