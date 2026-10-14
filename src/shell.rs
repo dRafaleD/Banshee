@@ -4,6 +4,7 @@
 //! dispatcher as the command line, so the two never drift apart.
 
 use std::io::{self, BufRead as _, IsTerminal as _, Write as _};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::CommandFactory;
@@ -85,7 +86,11 @@ pub fn run() -> Result<()> {
         && crate::terminal::enable_ansi();
     println!("{}", welcome());
     let mut reader = Reader::new(color);
-    while let Some(line) = reader.read("banshee> ")? {
+    let mut session = Session::default();
+    loop {
+        let Some(line) = reader.read(&session.prompt())? else {
+            break;
+        };
         let tokens = match tokenize(&line) {
             Ok(tokens) => tokens,
             Err(message) => {
@@ -93,15 +98,152 @@ pub fn run() -> Result<()> {
                 continue;
             }
         };
-        if !execute(&tokens, color) {
+        if !execute(&mut session, &tokens, color) {
             break;
         }
     }
     Ok(())
 }
 
+/// State kept between console lines.
+#[derive(Default)]
+struct Session {
+    /// File chosen with `open`, as an absolute path.
+    selected: Option<PathBuf>,
+}
+
+impl Session {
+    /// `banshee> `, or `banshee (name)> ` while a file is open.
+    fn prompt(&self) -> String {
+        match self
+            .selected
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| crate::output::terminal_safe(&name.to_string_lossy()))
+        {
+            Some(name) => format!("banshee ({name})> "),
+            None => "banshee> ".to_owned(),
+        }
+    }
+
+    fn open(&mut self, arguments: &[String]) {
+        let label = t("error:", "hata:");
+        let [target] = arguments else {
+            match &self.selected {
+                Some(path) if arguments.is_empty() => println!("{}", path.display()),
+                _ => eprintln!(
+                    "{}",
+                    t(
+                        "error: usage: open <file> (quote paths with spaces)",
+                        "hata: kullanım: open <dosya> (boşluklu yolları tırnak içine alın)",
+                    )
+                ),
+            }
+            return;
+        };
+        let path = match std::path::absolute(target) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("{label} {error}");
+                return;
+            }
+        };
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {
+                let shown = crate::output::terminal_safe(&path.display().to_string());
+                if crate::shell_help::is_turkish() {
+                    println!("Açık dosya: {shown} ({} bayt)", metadata.len());
+                } else {
+                    println!("Open file: {shown} ({} bytes)", metadata.len());
+                }
+                self.selected = Some(path);
+            }
+            Ok(_) => {
+                if crate::shell_help::is_turkish() {
+                    eprintln!("hata: '{target}' bir dosya değil");
+                } else {
+                    eprintln!("error: '{target}' is not a file");
+                }
+            }
+            Err(error) => {
+                if crate::shell_help::is_turkish() {
+                    eprintln!("hata: '{target}' açılamadı: {error}");
+                } else {
+                    eprintln!("error: cannot open '{target}': {error}");
+                }
+            }
+        }
+    }
+
+    fn close(&mut self) {
+        let closed = self.selected.take().is_some();
+        println!(
+            "{}",
+            match (closed, crate::shell_help::is_turkish()) {
+                (true, false) => "File closed",
+                (true, true) => "Dosya kapatıldı",
+                (false, false) => "No file is open",
+                (false, true) => "Açık dosya yok",
+            }
+        );
+    }
+
+    fn status(&self) {
+        let none = t("none", "yok");
+        let directory = std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "?".to_owned());
+        let file = self
+            .selected
+            .as_ref()
+            .map_or_else(|| none.to_owned(), |path| path.display().to_string());
+        let language = if crate::shell_help::is_turkish() {
+            "Türkçe"
+        } else {
+            "English"
+        };
+        let rows = [
+            (t("Directory", "Dizin"), directory),
+            (t("Open file", "Açık dosya"), file),
+            (t("Language", "Dil"), language.to_owned()),
+            (t("Version", "Sürüm"), env!("CARGO_PKG_VERSION").to_owned()),
+        ];
+        for (label, value) in rows {
+            println!("{label:<12} {}", crate::output::terminal_safe(&value));
+        }
+    }
+
+    /// Fills in the open file (`@`, or a lone command) and runs the command.
+    fn run_command(&self, tokens: &[String]) {
+        let selected = self
+            .selected
+            .as_ref()
+            .map(|path| path.display().to_string());
+        match crate::shell_session::expand(tokens, selected.as_deref()) {
+            Ok((expanded, implicit)) => {
+                if implicit && let Some(path) = &self.selected {
+                    let name = path.file_name().map(|name| name.to_string_lossy());
+                    println!(
+                        "{} {}",
+                        t("using open file:", "açık dosya kullanılıyor:"),
+                        crate::output::terminal_safe(&name.unwrap_or_default())
+                    );
+                }
+                dispatch(&expanded);
+            }
+            Err(crate::shell_session::ExpandError::NothingOpen) => eprintln!(
+                "{}",
+                t(
+                    "error: '@' needs an open file; use: open <file>",
+                    "hata: '@' için açık dosya gerekir; önce: open <dosya>",
+                )
+            ),
+        }
+    }
+}
+
 /// Handles one console line. Returns false when the console should close.
-fn execute(tokens: &[String], color: bool) -> bool {
+fn execute(session: &mut Session, tokens: &[String], color: bool) -> bool {
     let Some(first) = tokens.first() else {
         return true;
     };
@@ -135,11 +277,14 @@ fn execute(tokens: &[String], color: bool) -> bool {
         },
         "cd" => change_directory(rest),
         "ls" | "dir" => list_directory(rest),
+        "open" => session.open(rest),
+        "close" => session.close(),
+        "status" => session.status(),
         "shell" => eprintln!("{}", already_inside()),
         _ => {
             let mut arguments = tokens.to_vec();
             arguments[0] = name.to_owned();
-            dispatch(&arguments);
+            session.run_command(&arguments);
         }
     }
     true

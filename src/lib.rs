@@ -25,6 +25,7 @@ mod shell;
 #[cfg(feature = "line-editor")]
 mod shell_complete;
 mod shell_help;
+mod shell_session;
 mod splash;
 mod splash_boot;
 mod splash_portrait;

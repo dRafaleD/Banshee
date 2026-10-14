@@ -15,7 +15,8 @@ use rustyline::{Context, Helper};
 use crate::cli::Cli;
 
 const BUILTINS: &[&str] = &[
-    "help", "pwd", "cd", "ls", "clear", "lang", "tr", "en", "exit", "quit",
+    "help", "pwd", "cd", "ls", "open", "close", "status", "clear", "lang", "tr", "en", "exit",
+    "quit",
 ];
 
 /// Completes the last word of `prefix` (the line up to the cursor). Returns the
@@ -78,7 +79,7 @@ pub(crate) fn candidates(prefix: &str) -> Option<(usize, Vec<String>)> {
             names.extend(crate::shell_help::topic_keys().map(str::to_owned));
             return Some((start, spaced(matching(names))));
         }
-        "cd" | "ls" | "dir" => return None,
+        "cd" | "ls" | "dir" | "open" => return None,
         "lang" => {
             let languages = if done.len() == 1 {
                 matching(vec!["tr".to_owned(), "en".to_owned()])
@@ -194,8 +195,17 @@ impl Highlighter for ConsoleHelper {
         prompt: &'p str,
         _default: bool,
     ) -> Cow<'b, str> {
+        // `banshee> ` or `banshee (file)> `: brand green, open file muted.
         match prompt.strip_suffix("> ") {
-            Some(name) if self.color => Cow::Owned(format!("\x1b[38;5;46m{name}\x1b[0m> ")),
+            Some(text) if self.color => {
+                let (name, file) = text.split_once(' ').unwrap_or((text, ""));
+                let file = if file.is_empty() {
+                    String::new()
+                } else {
+                    format!(" \x1b[38;5;65m{file}\x1b[0m")
+                };
+                Cow::Owned(format!("\x1b[38;5;46m{name}\x1b[0m{file}> "))
+            }
             _ => Cow::Borrowed(prompt),
         }
     }

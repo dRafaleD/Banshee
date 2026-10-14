@@ -135,6 +135,24 @@ const CONSOLE: &[(&str, &str, &str, &str)] = &[
         "Çalışma dizinini değiştir",
     ),
     (
+        "open <file>",
+        "open <dosya>",
+        "Open a file; then use @ for it, or type report, file, entropy... alone",
+        "Dosya aç; sonra @ ile kullan ya da report, file, entropy... tek başına yaz",
+    ),
+    (
+        "close",
+        "close",
+        "Close the open file",
+        "Açık dosyayı kapat",
+    ),
+    (
+        "status",
+        "status",
+        "Show directory, open file and language",
+        "Dizin, açık dosya ve dili göster",
+    ),
+    (
         "ls [directory]",
         "ls [dizin]",
         "List up to 200 entries",

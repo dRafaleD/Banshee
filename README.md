@@ -67,6 +67,11 @@ are typed without the `banshee` prefix. `banshee shell` opens it directly.
 - `pwd`, `cd`, `ls`, `clear` and `exit` are console built-ins, and a leading
   `/` is optional. Everything else is the normal command line with the same
   flags and output.
+- `open sample.bin` keeps a file open for the session; the prompt then reads
+  `banshee (sample.bin)>`. Use `@` for it in any command (`report @ --format
+  json`, `whatis @`), or type `report`, `file`, `cert`, `scan`, `entropy`,
+  `whatis`, `analyze` or `extract` alone. `status` shows the directory, open
+  file and language, and `close` forgets the file.
 - Type `tr` (or `lang tr`) to switch the console to Turkish and `en` to
   switch back; set `BANSHEE_LANG=tr` to start in Turkish. The menu, built-in
   messages and command descriptions are translated; command output and the
