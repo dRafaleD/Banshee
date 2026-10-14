@@ -58,9 +58,27 @@ impl SplashInfo {
     }
 }
 
-/// Prints the start screen, choosing color from the terminal and NO_COLOR.
+/// Prints the start screen. Interactive terminals large enough for it get the
+/// animated boot screen with the mask; pipes, NO_COLOR, BANSHEE_NO_ANIMATION
+/// and small windows get the static summary.
 pub fn print() -> anyhow::Result<()> {
-    let color = std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal();
+    let interactive = std::io::stdout().is_terminal();
+    let color =
+        interactive && std::env::var_os("NO_COLOR").is_none() && crate::terminal::enable_ansi();
+    if color
+        && std::env::var_os("BANSHEE_NO_ANIMATION").is_none()
+        && let Some((columns, rows)) = crate::terminal::size()
+        && let Some(width) = crate::splash_boot::layout_width(columns)
+    {
+        // Largest mask whose screen still fits without scrolling.
+        if let Some(portrait_rows) = [20, 16, 12]
+            .into_iter()
+            .find(|portrait_rows| crate::splash_boot::height_for(*portrait_rows, width) < rows)
+        {
+            crate::splash_boot::play(&SplashInfo::current(), portrait_rows, width)?;
+            return Ok(());
+        }
+    }
     crate::output::write_raw(render(&SplashInfo::current(), color).as_bytes())
 }
 
