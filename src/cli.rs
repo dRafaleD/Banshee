@@ -87,6 +87,8 @@ pub enum Command {
     Watch(WatchArgs),
     /// Check the local installation offline (codecs, data, PATH, temp directory)
     Doctor(DoctorArgs),
+    /// Open the interactive console (also the default when run on a terminal)
+    Shell,
     /// Print the Banshee ASCII banner and mask emblem
     Banner(BannerArgs),
     /// Generate shell completion definitions

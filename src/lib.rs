@@ -21,6 +21,10 @@ pub mod report;
 mod report_html;
 pub mod rules;
 pub mod scan;
+mod shell;
+#[cfg(feature = "line-editor")]
+mod shell_complete;
+mod shell_help;
 mod splash;
 mod splash_boot;
 mod splash_portrait;
@@ -28,6 +32,8 @@ mod terminal;
 pub mod timestamp;
 mod tld;
 pub mod watch;
+
+use std::io::IsTerminal as _;
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
@@ -48,9 +54,13 @@ pub enum RunOutcome {
 }
 
 pub fn run() -> Result<RunOutcome> {
-    // Bare `banshee` opens the start screen instead of a usage error.
+    // Bare `banshee` opens the start screen instead of a usage error, then the
+    // interactive console when both ends are a terminal.
     if std::env::args_os().len() == 1 {
         splash::print()?;
+        if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+            shell::run()?;
+        }
         return Ok(RunOutcome::Success);
     }
     run_with(Cli::parse())
@@ -969,6 +979,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             doctor::print(&report, args.json)?;
         }
         Command::Banner(args) => banner::print(args.compact, args.mask_only)?,
+        Command::Shell => shell::run()?,
         Command::Completions(args) => {
             let mut command = Cli::command();
             output::with_output(|output| {

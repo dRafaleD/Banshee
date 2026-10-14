@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-banshee = { path = ".." }
+banshee = { path = "..", default-features = false, features = ["xz", "crypto-verify"] }
 clap = "4.5"
 serde_json = "1.0"
 

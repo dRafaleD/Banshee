@@ -7,6 +7,7 @@ changes must be called out explicitly. Tags are immutable.
 
 ### Added
 
+- Interactive console: `banshee` on a terminal (or `banshee shell`) opens a `banshee>` prompt that runs commands without the `banshee` prefix, with a categorized `help` menu (`help <category>`, `help <command>`), `pwd`/`cd`/`ls`, `clear` and `exit`. Tab completion and line history use the optional `line-editor` feature (on by default, off for the browser build).
 - Six-phase quality plan, synthetic parser mutation checks and bounded cargo-fuzz infrastructure.
 - Native Linux ARM64 and macOS Intel/Apple Silicon CI/package candidates.
 - Target-specific CycloneDX inventories and verified build/SBOM attestations;
