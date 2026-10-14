@@ -11,6 +11,7 @@ pub mod export;
 pub mod file_inspect;
 pub mod fuzzy;
 pub mod hash;
+mod i18n;
 pub mod input;
 pub mod ioc;
 pub mod jwt;
@@ -69,6 +70,9 @@ pub fn run() -> Result<RunOutcome> {
 
 pub fn run_with(cli: Cli) -> Result<RunOutcome> {
     let started = std::time::Instant::now();
+    if let Some(language) = cli.lang {
+        i18n::set_turkish(language == cli::Language::Tr);
+    }
     let fail_on_findings = cli.fail_on_findings;
     let verbose = cli.verbose;
     let destination = cli.output.clone();
@@ -216,7 +220,13 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             HashCommand::Identify(args) => {
                 let report = hash::identify(&args.value)?;
                 output::print_json_or(&report, args.json, |output| {
-                    writeln!(output, "Length: {} bits", report.bit_length)?;
+                    writeln!(
+                        output,
+                        "{} {} {}",
+                        i18n::t("Length:", "Uzunluk:"),
+                        report.bit_length,
+                        i18n::t("bits", "bit")
+                    )?;
                     for algorithm in &report.probable_algorithms {
                         writeln!(output, "- {algorithm}")?;
                     }
@@ -240,8 +250,19 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 let report = timestamp::to_human(args.value, args.unit)?;
                 output::print_json_or(&report, args.json, |output| {
                     writeln!(output, "UTC: {}", report.utc)?;
-                    writeln!(output, "Unix seconds: {}", report.unix_seconds)?;
-                    writeln!(output, "Detected unit: {}", report.detected_unit)
+                    let label = |english, turkish| i18n::t(english, turkish);
+                    writeln!(
+                        output,
+                        "{} {}",
+                        label("Unix seconds:", "Unix saniye:"),
+                        report.unix_seconds
+                    )?;
+                    writeln!(
+                        output,
+                        "{} {}",
+                        label("Detected unit:", "Algılanan birim:"),
+                        timestamp::unit_label(report.detected_unit)
+                    )
                 })?;
             }
             TimestampCommand::ToUnix(args) => {

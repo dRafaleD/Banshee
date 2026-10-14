@@ -26,6 +26,21 @@ impl std::fmt::Display for TimestampUnit {
     }
 }
 
+/// Unit name for human-readable output in the current language.
+pub fn unit_label(unit: TimestampUnit) -> String {
+    if !crate::i18n::is_turkish() {
+        return unit.to_string();
+    }
+    match unit {
+        TimestampUnit::Auto => "otomatik",
+        TimestampUnit::Seconds => "saniye",
+        TimestampUnit::Milliseconds => "milisaniye",
+        TimestampUnit::Microseconds => "mikrosaniye",
+        TimestampUnit::Nanoseconds => "nanosaniye",
+    }
+    .to_owned()
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct HumanTimestampReport {
     pub input: i128,

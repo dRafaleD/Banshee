@@ -3,8 +3,6 @@
 //! cannot drift from the real commands; tests fail when a command is missing
 //! from a category or has no Turkish description.
 
-use std::sync::atomic::{AtomicU8, Ordering};
-
 use clap::CommandFactory;
 
 use crate::cli::Cli;
@@ -12,30 +10,7 @@ use crate::cli::Cli;
 const RULE_WIDTH: usize = 60;
 const NAME_WIDTH: usize = 20;
 
-const LANG_UNSET: u8 = 0;
-const LANG_EN: u8 = 1;
-const LANG_TR: u8 = 2;
-static LANGUAGE: AtomicU8 = AtomicU8::new(LANG_UNSET);
-
-/// True when the console speaks Turkish. The first call reads `BANSHEE_LANG`
-/// (`tr` or `en`); `set_turkish` changes it afterwards.
-pub(crate) fn is_turkish() -> bool {
-    if LANGUAGE.load(Ordering::Relaxed) == LANG_UNSET {
-        let turkish = std::env::var("BANSHEE_LANG")
-            .is_ok_and(|value| value.trim().eq_ignore_ascii_case("tr"));
-        LANGUAGE.store(if turkish { LANG_TR } else { LANG_EN }, Ordering::Relaxed);
-    }
-    LANGUAGE.load(Ordering::Relaxed) == LANG_TR
-}
-
-pub(crate) fn set_turkish(turkish: bool) {
-    LANGUAGE.store(if turkish { LANG_TR } else { LANG_EN }, Ordering::Relaxed);
-}
-
-/// Picks the English or Turkish text for the current console language.
-pub(crate) fn t<'a>(english: &'a str, turkish: &'a str) -> &'a str {
-    if is_turkish() { turkish } else { english }
-}
+pub(crate) use crate::i18n::{is_turkish, set_turkish, t};
 
 struct Category {
     key: &'static str,
@@ -283,11 +258,11 @@ fn examples(items: &[&str], color: bool, turkish: bool) -> Vec<String> {
     lines
 }
 
-/// The categorized command list for `banshee --help` (always English).
-pub(crate) fn command_menu(color: bool) -> String {
+/// The categorized command list for `banshee --help`.
+pub(crate) fn command_menu(color: bool, turkish: bool) -> String {
     CATEGORIES
         .iter()
-        .map(|category| category_lines(category, color, false).join("\n"))
+        .map(|category| category_lines(category, color, turkish).join("\n"))
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -431,11 +406,13 @@ mod tests {
 
     #[test]
     fn command_menu_lists_every_category() {
-        let menu = command_menu(false);
+        let menu = command_menu(false, false);
         for category in CATEGORIES {
             assert!(menu.contains(category.title));
         }
         assert!(!menu.contains("CONSOLE") && !menu.contains('\x1b'));
+        let turkish = command_menu(false, true);
+        assert!(turkish.contains("ANALİZ") && turkish.contains("SİSTEM"));
     }
 
     #[test]

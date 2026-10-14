@@ -73,14 +73,23 @@ are typed without the `banshee` prefix. `banshee shell` opens it directly.
   `whatis`, `analyze` or `extract` alone. `status` shows the directory, open
   file and language, and `close` forgets the file.
 - Type `tr` (or `lang tr`) to switch the console to Turkish and `en` to
-  switch back; set `BANSHEE_LANG=tr` to start in Turkish. The menu, built-in
-  messages and command descriptions are translated; command output and the
-  option text of `help <command>` stay in English.
+  switch back. The menu, built-in messages and command descriptions are
+  translated; the option text of `help <command>` stays in English.
 - Pipes and scripts are unaffected: without a terminal, bare `banshee` only
   prints the start screen. Builds without the `line-editor` feature (such as
   the browser build) read plain lines and skip Tab completion.
 
 <img src="assets/banshee-console-help.png" alt="The categorized help menu of the Banshee console" width="100%">
+
+### Turkish output
+
+`--lang tr` (or `BANSHEE_LANG=tr`) switches human-readable text to Turkish on
+the command line too: `banshee --lang tr --help` shows the categorized menu,
+options and quick start in Turkish, and the labels of `whatis`, `entropy`,
+`jwt inspect`, `hash identify` and `timestamp` are translated. JSON, JSONL,
+CSV, Markdown, HTML, STIX and MISP output, rule and finding texts, and the
+text of other commands stay in English so that scripts and shared reports do
+not change with the language.
 
 ### First commands
 

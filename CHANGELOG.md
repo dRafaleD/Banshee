@@ -9,6 +9,7 @@ changes must be called out explicitly. Tags are immutable.
 
 - Interactive console: `banshee` on a terminal (or `banshee shell`) opens a `banshee>` prompt that runs commands without the `banshee` prefix, with a categorized `help` menu (`help <category>`, `help <command>`), `pwd`/`cd`/`ls`, `clear` and `exit`. Tab completion and line history use the optional `line-editor` feature (on by default, off for the browser build). `banshee --help` lists commands in the same categories.
 - Console sessions: `open <file>` keeps a file open (shown in the prompt), `@` stands for it in any command, lone `report`/`file`/`cert`/`scan`/`entropy`/`whatis`/`analyze`/`extract` use it, and `status` and `close` inspect or clear the session.
+- `--lang tr|en` global option (and `BANSHEE_LANG=tr`): Turkish help menu, options and quick start, and Turkish labels for `whatis`, `entropy`, `jwt inspect`, `hash identify` and `timestamp`. JSON, JSONL, CSV, Markdown, HTML, STIX, MISP, rule and finding texts stay English.
 - Turkish console: `tr` / `lang tr` switches the console menu, command descriptions and built-in messages to Turkish and `en` switches back; `BANSHEE_LANG=tr` starts in Turkish.
 - Six-phase quality plan, synthetic parser mutation checks and bounded cargo-fuzz infrastructure.
 - Native Linux ARM64 and macOS Intel/Apple Silicon CI/package candidates.

@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::analysis::AnalysisReport;
 use crate::analysis::entropy::EntropyReport;
+use crate::i18n::t;
 use crate::ioc::{IocReport, defang};
 use crate::jwt::JwtReport;
 use crate::watch::WatchEvent;
@@ -180,10 +181,20 @@ pub fn print_report(report: &AnalysisReport, json: bool) -> Result<()> {
         writeln!(
             output,
             "{}",
-            paint("No supported encoding layer detected.", Tone::Info)
+            paint(
+                t(
+                    "No supported encoding layer detected.",
+                    "Desteklenen kodlama katmanı bulunamadı."
+                ),
+                Tone::Info
+            )
         )?;
     } else {
-        writeln!(output, "{}", paint("Layers:", Tone::Heading))?;
+        writeln!(
+            output,
+            "{}",
+            paint(t("Layers:", "Katmanlar:"), Tone::Heading)
+        )?;
         for layer in &report.layers {
             let detail = layer
                 .detail
@@ -192,10 +203,11 @@ pub fn print_report(report: &AnalysisReport, json: bool) -> Result<()> {
                 .unwrap_or_default();
             writeln!(
                 output,
-                "  [{}] {} ({:.0}% confidence{detail})",
+                "  [{}] {} ({:.0}% {}{detail})",
                 layer.depth,
                 paint(&layer.kind.to_string(), Tone::Info),
-                layer.confidence * 100.0
+                layer.confidence * 100.0,
+                t("confidence", "güven")
             )?;
             writeln!(
                 output,
@@ -205,17 +217,25 @@ pub fn print_report(report: &AnalysisReport, json: bool) -> Result<()> {
         }
     }
 
-    writeln!(output, "\n{}", paint("Final result:", Tone::Heading))?;
+    writeln!(
+        output,
+        "\n{}",
+        paint(t("Final result:", "Nihai sonuç:"), Tone::Heading)
+    )?;
     writeln!(output, "{}", terminal_safe(&report.final_value))?;
     writeln!(
         output,
         "\n{} {:.0}%",
-        paint("Overall confidence:", Tone::Heading),
+        paint(t("Overall confidence:", "Genel güven:"), Tone::Heading),
         report.confidence * 100.0
     )?;
 
     if !report.findings.is_empty() {
-        writeln!(output, "\n{}", paint("Findings:", Tone::Danger))?;
+        writeln!(
+            output,
+            "\n{}",
+            paint(t("Findings:", "Bulgular:"), Tone::Danger)
+        )?;
         for finding in &report.findings {
             write!(
                 output,
@@ -244,33 +264,50 @@ pub fn print_entropy_report(report: &EntropyReport, json: bool) -> Result<()> {
 
     writeln!(
         output,
-        "{} {:.2} bits per byte",
-        paint("Entropy:", Tone::Heading),
-        report.bits_per_byte
+        "{} {:.2} {}",
+        paint(t("Entropy:", "Entropi:"), Tone::Heading),
+        report.bits_per_byte,
+        t("bits per byte", "bit/bayt")
     )?;
     writeln!(
         output,
-        "Normalized entropy: {:.0}%",
+        "{} {:.0}%",
+        t("Normalized entropy:", "Normalize entropi:"),
         report.normalized_entropy * 100.0
     )?;
     writeln!(
         output,
-        "Input: {} bytes, {} unique byte values",
-        report.byte_length, report.unique_bytes
+        "{}",
+        if crate::i18n::is_turkish() {
+            format!(
+                "Girdi: {} bayt, {} benzersiz bayt değeri",
+                report.byte_length, report.unique_bytes
+            )
+        } else {
+            format!(
+                "Input: {} bytes, {} unique byte values",
+                report.byte_length, report.unique_bytes
+            )
+        }
     )?;
     writeln!(
         output,
-        "Classification: {}",
-        paint(&report.classification.to_string(), Tone::Info)
+        "{} {}",
+        t("Classification:", "Sınıflandırma:"),
+        paint(&classification_label(report.classification), Tone::Info)
     )?;
     writeln!(
         output,
         "{} {}/100 ({})",
-        paint("Suspicion score:", Tone::Warning),
+        paint(t("Suspicion score:", "Şüphe skoru:"), Tone::Warning),
         report.suspicion_score,
-        report.suspicion_level
+        suspicion_label(report.suspicion_level)
     )?;
-    writeln!(output, "{}", paint("Signals:", Tone::Heading))?;
+    writeln!(
+        output,
+        "{}",
+        paint(t("Signals:", "Sinyaller:"), Tone::Heading)
+    )?;
     for signal in &report.signals {
         writeln!(output, "  - {signal}")?;
     }
@@ -287,34 +324,46 @@ pub fn print_jwt_report(report: &JwtReport, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    writeln!(output, "{}", paint("Header:", Tone::Heading))?;
+    writeln!(output, "{}", paint(t("Header:", "Başlık:"), Tone::Heading))?;
     writeln!(output, "{}", serde_json::to_string_pretty(&report.header)?)?;
-    writeln!(output, "\n{}", paint("Payload:", Tone::Heading))?;
+    writeln!(output, "\n{}", paint(t("Payload:", "Yük:"), Tone::Heading))?;
     writeln!(output, "{}", serde_json::to_string_pretty(&report.payload)?)?;
     writeln!(
         output,
-        "\n{} {} ({} encoded characters); verified: no",
-        paint("Signature:", Tone::Heading),
+        "\n{} {} ({} {}); {}",
+        paint(t("Signature:", "İmza:"), Tone::Heading),
         if report.signature.present {
-            "present"
+            t("present", "var")
         } else {
-            "empty"
+            t("empty", "boş")
         },
-        report.signature.encoded_length
+        report.signature.encoded_length,
+        t("encoded characters", "kodlanmış karakter"),
+        t("verified: no", "doğrulandı: hayır")
     )?;
 
     if !report.time_claims.is_empty() {
         writeln!(
             output,
             "\n{}",
-            paint("Time claims (Unix seconds):", Tone::Heading)
+            paint(
+                t(
+                    "Time claims (Unix seconds):",
+                    "Zaman iddiaları (Unix saniye):"
+                ),
+                Tone::Heading
+            )
         )?;
         for claim in &report.time_claims {
             writeln!(output, "  - {}: {}", claim.name, claim.unix_seconds)?;
         }
     }
 
-    writeln!(output, "\n{}", paint("Security notes:", Tone::Warning))?;
+    writeln!(
+        output,
+        "\n{}",
+        paint(t("Security notes:", "Güvenlik notları:"), Tone::Warning)
+    )?;
     for note in &report.security_notes {
         writeln!(output, "  - [{}] {}", note.severity, note.message)?;
     }
@@ -526,6 +575,35 @@ pub fn print_watch_csv(event: &WatchEvent) -> Result<()> {
         ],
     )?;
     Ok(())
+}
+
+/// Classification text in the current language (English comes from `Display`).
+fn classification_label(classification: crate::analysis::entropy::Classification) -> String {
+    use crate::analysis::entropy::Classification;
+    if !crate::i18n::is_turkish() {
+        return classification.to_string();
+    }
+    match classification {
+        Classification::PlainText => "düz metin veya düşük entropili veri",
+        Classification::Encoded => "kodlanmış veri",
+        Classification::Jwt => "JSON Web Token",
+        Classification::HashLike => "özet (hash) benzeri değer",
+        Classification::HighEntropy => "yüksek entropili veri (rastgele veya şifreli olabilir)",
+    }
+    .to_owned()
+}
+
+fn suspicion_label(level: crate::analysis::entropy::SuspicionLevel) -> String {
+    use crate::analysis::entropy::SuspicionLevel;
+    if !crate::i18n::is_turkish() {
+        return level.to_string();
+    }
+    match level {
+        SuspicionLevel::Low => "düşük",
+        SuspicionLevel::Medium => "orta",
+        SuspicionLevel::High => "yüksek",
+    }
+    .to_owned()
 }
 
 fn preview(value: &str, max_chars: usize) -> String {
