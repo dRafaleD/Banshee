@@ -222,13 +222,61 @@ inputs cannot be uploaded. Reports open in a sandboxed frame without scripts.
 The browser build omits XZ decompression and JWT/X.509 signature checks, which
 need native libraries; use the command-line tool for those.
 
+## Install
+
+### Prebuilt packages
+
+[Banshee v0.2.0](https://github.com/dRafaleD/Banshee/releases/tag/v0.2.0) is
+published as an alpha pre-release with packages for five platforms. Each archive
+holds the binary, shell completions, a manual page, examples and documentation.
+
+| Platform | Archive |
+| --- | --- |
+| Windows x86_64 | `banshee-0.2.0-x86_64-pc-windows-msvc.zip` |
+| Linux x86_64 (glibc) | `banshee-0.2.0-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 (glibc) | `banshee-0.2.0-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS Intel | `banshee-0.2.0-x86_64-apple-darwin.tar.gz` |
+| macOS Apple Silicon | `banshee-0.2.0-aarch64-apple-darwin.tar.gz` |
+
+Download the archive and its `.sha256` file into one directory and check the
+checksum before extracting:
+
+```bash
+sha256sum --check banshee-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf banshee-0.2.0-x86_64-unknown-linux-gnu.tar.gz
+./banshee-0.2.0-x86_64-unknown-linux-gnu/banshee doctor
+```
+
+```powershell
+$archive = 'banshee-0.2.0-x86_64-pc-windows-msvc.zip'
+$expected = ((Get-Content "$archive.sha256").Trim() -split '\s+')[0]
+if ((Get-FileHash $archive -Algorithm SHA256).Hash -ine $expected) { throw 'Checksum mismatch' }
+Expand-Archive $archive
+.\banshee-0.2.0-x86_64-pc-windows-msvc\banshee.exe doctor
+```
+
+On macOS use `shasum -a 256 -c` instead of `sha256sum --check`. To check who
+built an archive, use the GitHub CLI:
+`gh attestation verify ARCHIVE --repo dRafaleD/Banshee`. Each archive also has
+a `.sbom.json` inventory next to it. Checksums detect corrupted downloads; the
+attestation links the exact bytes to the release workflow and source commit
+(see [package provenance](docs/SUPPLY_CHAIN.md)).
+
+Put the extracted `banshee` binary on your `PATH` yourself; nothing is installed
+automatically. Platform notes: Linux packages need a compatible glibc and are not
+static builds; macOS packages are unsigned and not notarized, and may need
+Homebrew `xz` at runtime (`brew install xz`) and may be blocked by Gatekeeper on first
+run. Run `banshee doctor` after installing to check the setup.
+
 ## Build
+
+Build from source if your platform has no package, or to use a modified tree.
 
 ### Requirements
 
 - The native CI matrix covers **Windows x86_64, Linux x86_64/ARM64 and macOS
-  Intel/Apple Silicon**. The CI badge links to actual run results; source support
-  does not imply every platform is already available on the Releases page.
+  Intel/Apple Silicon**, the same platforms as the prebuilt packages above. The
+  CI badge links to actual run results.
 - **Rust 1.88 or newer**. The repository selects the latest stable toolchain
   through `rust-toolchain.toml`; the minimum version is declared, not separately
   tested in the CI matrix.
@@ -256,10 +304,10 @@ The binary will be available at `target/release/banshee` on Linux or
 .\target\release\banshee.exe decode base64 aGVsbG8=
 ```
 
-Versioned binary archives are built by the release workflow. Check the assets on
-the [Releases page](https://github.com/dRafaleD/Banshee/releases) before expecting
-a download; the original `v0.1.0` tag predates the packaging pipeline.
-See [release and checksum instructions](docs/RELEASING.md).
+Versioned binary archives are built by the release workflow and listed on the
+[Releases page](https://github.com/dRafaleD/Banshee/releases); the original
+`v0.1.0` tag predates the packaging pipeline and has none. See
+[release and checksum instructions](docs/RELEASING.md).
 
 On Linux, install it for the current user with:
 

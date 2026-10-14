@@ -78,5 +78,6 @@ commit checks. Candidate CI attestations are not release attestations.
 Linux GNU binaries are built on Ubuntu 24.04 and require compatible glibc/liblzma;
 they are not static/musl builds. macOS packages use native macOS 15 runners and
 Homebrew xz; they are unsigned/not notarized and may require Homebrew xz at runtime.
-New platform packages become public only with a future authorized release; the
-existing v0.1.1 release remains Windows/Linux x86_64 without these attestations.
+Five-platform packages with attestations first shipped in v0.2.0; the older
+v0.1.1 release remains Windows/Linux x86_64 without these attestations.
+Releases are published as alpha pre-releases while Banshee is pre-1.0.
