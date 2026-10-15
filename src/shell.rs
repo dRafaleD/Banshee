@@ -91,18 +91,120 @@ pub fn run() -> Result<()> {
         let Some(line) = reader.read(&session.prompt())? else {
             break;
         };
-        let tokens = match tokenize(&line) {
-            Ok(tokens) => tokens,
-            Err(message) => {
-                eprintln!("{} {message}", t("error:", "hata:"));
-                continue;
-            }
-        };
-        if !execute(&mut session, &tokens, color) {
+        if !handle_line(&mut session, &line, color) {
             break;
         }
     }
     Ok(())
+}
+
+const MAX_HISTORY: usize = 1_000;
+const MAX_SCRIPT_LINES: usize = 1_000;
+const MAX_SCRIPT_BYTES: u64 = 1024 * 1024;
+const MAX_SCRIPT_DEPTH: usize = 4;
+
+/// Expands `!N`, records the line in the history and runs it. Returns false
+/// when the console should close.
+fn handle_line(session: &mut Session, line: &str, color: bool) -> bool {
+    let mut line = line.trim().to_owned();
+    if let Some(number) = line.strip_prefix('!') {
+        let previous = number
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .and_then(|number| number.checked_sub(1))
+            .and_then(|index| session.history.get(index))
+            .cloned();
+        match previous {
+            Some(previous) => {
+                println!("{previous}");
+                line = previous;
+            }
+            None => {
+                eprintln!(
+                    "{}",
+                    t(
+                        "error: no such history entry; see history",
+                        "hata: geçmişte böyle bir kayıt yok; bkz. history",
+                    )
+                );
+                return true;
+            }
+        }
+    }
+    let tokens = match tokenize(&line) {
+        Ok(tokens) => tokens,
+        Err(message) => {
+            eprintln!("{} {message}", t("error:", "hata:"));
+            return true;
+        }
+    };
+    let Some(first) = tokens.first() else {
+        return true;
+    };
+    let name = first.trim_start_matches('/');
+    if !matches!(name, "history" | "save") && session.history.len() < MAX_HISTORY {
+        session.history.push(line.clone());
+    }
+    execute(session, &tokens, color)
+}
+
+/// Runs the commands in a file as if typed, echoing each one. Blank lines and
+/// `#` comments are skipped; `exit` stops the script, not the console.
+fn run_script(session: &mut Session, arguments: &[String], color: bool) {
+    let [path] = arguments else {
+        eprintln!(
+            "{}",
+            t("error: usage: run <file>", "hata: kullanım: run <dosya>")
+        );
+        return;
+    };
+    if session.script_depth >= MAX_SCRIPT_DEPTH {
+        eprintln!(
+            "{}",
+            t(
+                "error: scripts are nested too deeply",
+                "hata: betikler çok derin iç içe çağrılıyor",
+            )
+        );
+        return;
+    }
+    let text = match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_SCRIPT_BYTES => {
+            std::fs::read_to_string(path)
+        }
+        Ok(_) => {
+            eprintln!(
+                "{}",
+                t(
+                    "error: run needs a text file of at most 1 MiB",
+                    "hata: run en fazla 1 MiB'lik bir metin dosyası ister",
+                )
+            );
+            return;
+        }
+        Err(error) => Err(error),
+    };
+    let text = match text {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("{} {error}", t("error:", "hata:"));
+            return;
+        }
+    };
+    session.script_depth += 1;
+    for line in text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .take(MAX_SCRIPT_LINES)
+    {
+        println!("{}{}", session.prompt(), crate::output::terminal_safe(line));
+        if !handle_line(session, line, color) {
+            break;
+        }
+    }
+    session.script_depth -= 1;
 }
 
 /// State kept between console lines.
@@ -110,6 +212,10 @@ pub fn run() -> Result<()> {
 struct Session {
     /// File chosen with `open`, as an absolute path.
     selected: Option<PathBuf>,
+    /// Commands typed this session, in memory only.
+    history: Vec<String>,
+    /// Nesting of `run` scripts, bounded to stop a script running itself.
+    script_depth: usize,
 }
 
 impl Session {
@@ -172,6 +278,63 @@ impl Session {
                     eprintln!("error: cannot open '{target}': {error}");
                 }
             }
+        }
+    }
+
+    fn show_history(&self) {
+        if self.history.is_empty() {
+            println!("{}", t("History is empty", "Geçmiş boş"));
+        }
+        for (index, line) in self.history.iter().enumerate() {
+            println!("{:>4}  {}", index + 1, crate::output::terminal_safe(line));
+        }
+    }
+
+    /// Writes the history to a new file, one command per line, so `run` can
+    /// replay it. An existing file is kept unless `--force` follows the path.
+    fn save(&self, arguments: &[String]) {
+        let (path, force) = match arguments {
+            [path] => (path, false),
+            [path, flag] if flag == "--force" => (path, true),
+            _ => {
+                eprintln!(
+                    "{}",
+                    t(
+                        "error: usage: save <file> [--force]",
+                        "hata: kullanım: save <dosya> [--force]",
+                    )
+                );
+                return;
+            }
+        };
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true);
+        if force {
+            options.create(true).truncate(true);
+        } else {
+            options.create_new(true);
+        }
+        let mut text = self.history.join("\n");
+        text.push('\n');
+        match options
+            .open(path)
+            .and_then(|mut file| file.write_all(text.as_bytes()))
+        {
+            Ok(()) => {
+                if crate::shell_help::is_turkish() {
+                    println!("{} komut {path} dosyasına kaydedildi", self.history.len());
+                } else {
+                    println!("Saved {} command(s) to {path}", self.history.len());
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => eprintln!(
+                "{}",
+                t(
+                    "error: the file exists; add --force to replace it",
+                    "hata: dosya zaten var; üzerine yazmak için --force ekleyin",
+                )
+            ),
+            Err(error) => eprintln!("{} {error}", t("error:", "hata:")),
         }
     }
 
@@ -280,6 +443,9 @@ fn execute(session: &mut Session, tokens: &[String], color: bool) -> bool {
         "open" => session.open(rest),
         "close" => session.close(),
         "status" => session.status(),
+        "history" => session.show_history(),
+        "save" => session.save(rest),
+        "run" => run_script(session, rest, color),
         "shell" => eprintln!("{}", already_inside()),
         _ => {
             let mut arguments = tokens.to_vec();

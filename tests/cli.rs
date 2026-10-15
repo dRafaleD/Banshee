@@ -117,6 +117,40 @@ fn script_files_report_high_signal_behaviors() {
 }
 
 #[test]
+fn console_history_saves_and_replays_a_session() {
+    let script = temp_fixture("session.txt");
+    let _ = std::fs::remove_file(&script);
+    let script_path = script.display().to_string();
+    let mut record = Command::cargo_bin("banshee").expect("binary");
+    record
+        .arg("shell")
+        .write_stdin(format!(
+            "decode base64 aGVsbG8=\nhistory\n!1\n!7\nsave {script_path}\nsave {script_path}\nexit\n"
+        ))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("   1  decode base64 aGVsbG8="))
+        .stdout(predicate::str::contains("Saved 2 command(s)"))
+        .stderr(predicate::str::contains("no such history entry"))
+        .stderr(predicate::str::contains("add --force"));
+    assert_eq!(
+        std::fs::read_to_string(&script).expect("saved script"),
+        "decode base64 aGVsbG8=\ndecode base64 aGVsbG8=\n"
+    );
+
+    let mut replay = Command::cargo_bin("banshee").expect("binary");
+    replay
+        .arg("shell")
+        .write_stdin(format!("run {script_path}\nexit\n"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "banshee> decode base64 aGVsbG8=\nhello\n",
+        ));
+    std::fs::remove_file(script).expect("remove script");
+}
+
+#[test]
 fn hexdump_shows_a_bounded_window() {
     let mut command = Command::cargo_bin("banshee").expect("binary");
     command

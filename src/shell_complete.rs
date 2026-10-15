@@ -15,8 +15,8 @@ use rustyline::{Context, Helper};
 use crate::cli::Cli;
 
 const BUILTINS: &[&str] = &[
-    "help", "pwd", "cd", "ls", "open", "close", "status", "clear", "lang", "tr", "en", "exit",
-    "quit",
+    "help", "pwd", "cd", "ls", "open", "close", "status", "history", "save", "run", "clear",
+    "lang", "tr", "en", "exit", "quit",
 ];
 
 /// Completes the last word of `prefix` (the line up to the cursor). Returns the
@@ -79,7 +79,7 @@ pub(crate) fn candidates(prefix: &str) -> Option<(usize, Vec<String>)> {
             names.extend(crate::shell_help::topic_keys().map(str::to_owned));
             return Some((start, spaced(matching(names))));
         }
-        "cd" | "ls" | "dir" | "open" => return None,
+        "cd" | "ls" | "dir" | "open" | "save" | "run" => return None,
         "lang" => {
             let languages = if done.len() == 1 {
                 matching(vec!["tr".to_owned(), "en".to_owned()])

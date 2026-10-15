@@ -128,6 +128,24 @@ const CONSOLE: &[(&str, &str, &str, &str)] = &[
         "Dizin, açık dosya ve dili göster",
     ),
     (
+        "history / !N",
+        "history / !N",
+        "List this session's commands / run command N again",
+        "Bu oturumun komutlarını listele / N numaralı komutu yeniden çalıştır",
+    ),
+    (
+        "save <file>",
+        "save <dosya>",
+        "Save the history as a script (add --force to replace a file)",
+        "Geçmişi betik olarak kaydet (dosyanın üzerine yazmak için --force)",
+    ),
+    (
+        "run <file>",
+        "run <dosya>",
+        "Run the commands in a saved script",
+        "Kayıtlı bir betikteki komutları çalıştır",
+    ),
+    (
         "ls [directory]",
         "ls [dizin]",
         "List up to 200 entries",
