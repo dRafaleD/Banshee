@@ -83,7 +83,7 @@ pub(super) fn inspect_elf(bytes: &[u8]) -> Result<Option<ExecutableReport>> {
         dotnet: None,
         authenticode: None,
     };
-    enrich_elf(bytes, bits, little, &mut report);
+    enrich_elf(bytes, bits, little, entry, &mut report);
     Ok(Some(report))
 }
 
@@ -94,6 +94,7 @@ struct ElfSegment {
     offset: u64,
     virtual_address: u64,
     file_size: u64,
+    memory_size: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -106,7 +107,7 @@ struct ElfSectionRaw {
     size: u64,
 }
 
-fn enrich_elf(bytes: &[u8], bits: u8, little: bool, report: &mut ExecutableReport) {
+fn enrich_elf(bytes: &[u8], bits: u8, little: bool, entry: u64, report: &mut ExecutableReport) {
     let (
         program_offset,
         program_entry_size,
@@ -171,6 +172,120 @@ fn enrich_elf(bytes: &[u8], bits: u8, little: bool, report: &mut ExecutableRepor
         ),
         report,
     );
+    flag_elf_properties(bytes, entry, &segments, report);
+}
+
+/// Hardening gaps and tampering signs that are visible from the headers alone.
+/// None of these is a verdict; each is common in some legitimate build.
+fn flag_elf_properties(
+    bytes: &[u8],
+    entry: u64,
+    segments: &[ElfSegment],
+    report: &mut ExecutableReport,
+) {
+    const PT_LOAD: u32 = 1;
+    const PT_GNU_STACK: u32 = 0x6474_e551;
+    let relocatable = report.kind == "relocatable";
+    if segments
+        .iter()
+        .any(|segment| segment.kind == PT_GNU_STACK && segment.flags & 0x1 != 0)
+    {
+        report
+            .suspicious_properties
+            .push("ELF requests an executable stack (PT_GNU_STACK is executable)".to_owned());
+    }
+    if report.kind == "executable" && report.interpreter.is_some() {
+        report.suspicious_properties.push(
+            "ELF is a dynamically linked executable that is not position-independent".to_owned(),
+        );
+    }
+    if !relocatable && entry != 0 && !segments.is_empty() {
+        let in_executable_segment = segments.iter().any(|segment| {
+            segment.kind == PT_LOAD
+                && segment.flags & 0x1 != 0
+                && entry
+                    .checked_sub(segment.virtual_address)
+                    .is_some_and(|delta| delta < segment.memory_size.max(segment.file_size).max(1))
+        });
+        if !in_executable_segment {
+            report
+                .suspicious_properties
+                .push("ELF entry point is outside every executable segment".to_owned());
+        }
+    }
+    if let Some(interpreter) = &report.interpreter
+        && !is_standard_interpreter(interpreter)
+    {
+        report.suspicious_properties.push(format!(
+            "ELF uses a non-standard interpreter '{interpreter}'"
+        ));
+    }
+    for (label, value) in [("RPATH", &report.rpath), ("RUNPATH", &report.runpath)] {
+        if let Some(value) = value
+            && let Some(entry) = value.split(':').find(|entry| is_risky_search_path(entry))
+        {
+            report.suspicious_properties.push(format!(
+                "ELF {label} contains a writable or relative search path '{entry}'"
+            ));
+        }
+    }
+    if report
+        .needed_libraries
+        .iter()
+        .any(|library| library.contains('/') && is_risky_search_path(library))
+    {
+        report
+            .suspicious_properties
+            .push("ELF loads a library from a writable or relative path".to_owned());
+    }
+    if report
+        .section_details
+        .iter()
+        .any(|section| section.name.starts_with("UPX"))
+        || contains_upx_marker(bytes)
+    {
+        report
+            .suspicious_properties
+            .push("ELF carries UPX packer markers".to_owned());
+    }
+    if report.sections == 0 && !segments.is_empty() && !relocatable {
+        report.suspicious_properties.push(
+            "ELF has no section headers, which packers and stripping tools produce".to_owned(),
+        );
+    }
+}
+
+fn contains_upx_marker(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(64 * 1024)];
+    head.windows(4).any(|window| window == b"UPX!")
+}
+
+fn is_standard_interpreter(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let known_directory = [
+        "/lib/",
+        "/lib64/",
+        "/lib32/",
+        "/libx32/",
+        "/usr/lib/",
+        "/system/bin/",
+    ]
+    .iter()
+    .any(|prefix| path.starts_with(prefix))
+        || path.starts_with("/usr/lib") && path.contains("/ld");
+    known_directory && (name.starts_with("ld") || name == "linker" || name == "linker64")
+}
+
+/// Search-path entries an attacker could plant a library in: temporary
+/// directories, per-user shared memory, or paths relative to the working
+/// directory. `$ORIGIN` entries are normal and not reported.
+pub(super) fn is_risky_search_path(entry: &str) -> bool {
+    if entry.is_empty() || entry == "." || entry.starts_with("./") || entry.starts_with("../") {
+        return true;
+    }
+    ["/tmp", "/var/tmp", "/dev/shm", "/run/user"]
+        .iter()
+        .any(|prefix| entry == *prefix || entry.starts_with(&format!("{prefix}/")))
 }
 
 fn parse_elf_segments(
@@ -219,6 +334,7 @@ fn parse_elf_segments(
                 offset: read_u64(header, 8, little).unwrap_or(0),
                 virtual_address: read_u64(header, 16, little).unwrap_or(0),
                 file_size: read_u64(header, 32, little).unwrap_or(0),
+                memory_size: read_u64(header, 40, little).unwrap_or(0),
             }
         } else {
             ElfSegment {
@@ -227,6 +343,7 @@ fn parse_elf_segments(
                 offset: u64::from(read_u32(header, 4, little).unwrap_or(0)),
                 virtual_address: u64::from(read_u32(header, 8, little).unwrap_or(0)),
                 file_size: u64::from(read_u32(header, 16, little).unwrap_or(0)),
+                memory_size: u64::from(read_u32(header, 20, little).unwrap_or(0)),
             }
         };
         if segment.offset.saturating_add(segment.file_size) > bytes.len() as u64 {

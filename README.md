@@ -217,7 +217,10 @@ The initial foundation includes the following commands:
 - Computes pefile-compatible PE import hashes, decodes and validates Rich
   headers, counts TLS callbacks and reports per-section entropy.
 - Parses ELF interpreters, dynamic dependencies, RPATH/RUNPATH, section
-  permissions, and stripped/debug indicators.
+  permissions, and stripped/debug indicators, flagging executable stacks,
+  non-PIE dynamic executables, entry points outside executable segments,
+  non-standard interpreters, RPATH/RUNPATH or libraries in writable or
+  relative paths, UPX markers and missing section headers.
 - Parses Mach-O and universal binaries: segments and protections, linked
   dylibs, `LC_RPATH`, dynamic linker, entry point and code-signature
   presence, flagging writable and executable segments, stack execution,
