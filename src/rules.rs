@@ -30,6 +30,54 @@ pub enum RuleKind {
     Hex,
 }
 
+/// Text encodings a literal pattern matches, as YARA's `ascii` and `wide`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextEncoding {
+    #[default]
+    Ascii,
+    /// UTF-16LE, as Windows stores most strings in binaries.
+    Wide,
+    /// Either of the two.
+    Both,
+}
+
+impl std::fmt::Display for TextEncoding {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Ascii => "ascii",
+            Self::Wide => "wide",
+            Self::Both => "both",
+        })
+    }
+}
+
+/// Bytes-regex source for a literal in the given encoding. The wide form
+/// interleaves the UTF-16LE high byte, so `(?i)` still folds ASCII letters.
+pub(crate) fn literal_pattern(text: &str, encoding: TextEncoding) -> String {
+    let ascii = regex::escape(text);
+    let wide = || {
+        let units: String = text
+            .encode_utf16()
+            .map(|unit| match u8::try_from(unit) {
+                Ok(byte) if byte.is_ascii() => {
+                    format!("{}\\x00", regex::escape(&char::from(byte).to_string()))
+                }
+                _ => {
+                    let [low, high] = unit.to_le_bytes();
+                    format!("\\x{low:02X}\\x{high:02X}")
+                }
+            })
+            .collect();
+        format!("(?-u:{units})")
+    };
+    match encoding {
+        TextEncoding::Ascii => ascii,
+        TextEncoding::Wide => wide(),
+        TextEncoding::Both => format!("(?:{ascii})|{}", wide()),
+    }
+}
+
 impl std::fmt::Display for RuleKind {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -132,6 +180,8 @@ struct RuleDefinition {
     pattern: String,
     #[serde(default)]
     case_insensitive: bool,
+    #[serde(default)]
+    encoding: TextEncoding,
     #[serde(default = "default_min_matches")]
     min_matches: usize,
     #[serde(default = "default_max_matches")]
@@ -152,6 +202,11 @@ struct RuleDefinition {
     min_entropy: Option<f64>,
     #[serde(default)]
     max_entropy: Option<f64>,
+    /// Input size bounds in bytes, as YARA's `filesize` comparisons.
+    #[serde(default)]
+    min_size: Option<u64>,
+    #[serde(default)]
+    max_size: Option<u64>,
     #[serde(default)]
     all: Vec<RuleCondition>,
     #[serde(default)]
@@ -166,6 +221,8 @@ struct RuleCondition {
     pattern: String,
     #[serde(default)]
     case_insensitive: bool,
+    #[serde(default)]
+    encoding: TextEncoding,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -519,6 +576,11 @@ fn validate_definition(rule: &RuleDefinition, ids: &mut HashSet<String>) -> Resu
     {
         bail!("rule '{}' min_entropy cannot exceed max_entropy", rule.id);
     }
+    if let (Some(minimum), Some(maximum)) = (rule.min_size, rule.max_size)
+        && minimum > maximum
+    {
+        bail!("rule '{}' min_size cannot exceed max_size", rule.id);
+    }
     if rule.all.len() > MAX_CONDITIONS_PER_GROUP || rule.any.len() > MAX_CONDITIONS_PER_GROUP {
         bail!(
             "rule '{}' all/any groups are limited to {MAX_CONDITIONS_PER_GROUP} conditions each",
@@ -597,7 +659,12 @@ fn validate_condition(
 }
 
 fn compile_matcher(rule: &RuleDefinition) -> Result<Matcher> {
-    compile_pattern(rule.kind, &rule.pattern, rule.case_insensitive)
+    compile_pattern(
+        rule.kind,
+        &rule.pattern,
+        rule.case_insensitive,
+        rule.encoding,
+    )
 }
 
 fn compile_condition(condition: &RuleCondition) -> Result<Matcher> {
@@ -605,15 +672,24 @@ fn compile_condition(condition: &RuleCondition) -> Result<Matcher> {
         condition.kind,
         &condition.pattern,
         condition.case_insensitive,
+        condition.encoding,
     )
 }
 
-fn compile_pattern(kind: RuleKind, source: &str, case_insensitive: bool) -> Result<Matcher> {
+fn compile_pattern(
+    kind: RuleKind,
+    source: &str,
+    case_insensitive: bool,
+    encoding: TextEncoding,
+) -> Result<Matcher> {
+    if encoding != TextEncoding::Ascii && kind != RuleKind::Literal {
+        bail!("encoding = \"{encoding}\" applies only to literal patterns");
+    }
     if kind == RuleKind::Hex {
         return Ok(Matcher::Hex(parse_hex_pattern(source)?));
     }
     let pattern = if kind == RuleKind::Literal {
-        regex::escape(source)
+        literal_pattern(source, encoding)
     } else {
         source.to_owned()
     };
@@ -658,6 +734,18 @@ fn scan_rule(
     entropy: f64,
 ) -> Option<RuleMatchReport> {
     if !rule.definition.file_types.is_empty() && !rule.definition.file_types.contains(&file_type) {
+        return None;
+    }
+    let size = input.len() as u64;
+    if rule
+        .definition
+        .min_size
+        .is_some_and(|minimum| size < minimum)
+        || rule
+            .definition
+            .max_size
+            .is_some_and(|maximum| size > maximum)
+    {
         return None;
     }
     if rule

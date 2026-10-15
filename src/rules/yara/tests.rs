@@ -111,7 +111,7 @@ private rule AnyMarker {
     assert!(toml.contains(r#"tags = ["dropper", "windows"]"#));
     assert!(toml.contains(r#"pattern = "cmd\\.exe /c [a-z]+""#));
     // "any of them" becomes one alternation, with hex as a byte-level group.
-    assert!(toml.contains(r#"pattern = "alpha|(?s-u:\\x62\\x65\\x74\\x61)""#));
+    assert!(toml.contains(r#"pattern = "(?:alpha)|(?s-u:\\x62\\x65\\x74\\x61)""#));
 
     let scan = super::super::scan_source(toml, b"xx BETA beta yy").expect("scan");
     assert_eq!(scan.matched_rules, 1);
@@ -122,12 +122,15 @@ private rule AnyMarker {
 fn import_reports_unsupported_constructs_by_rule() {
     let yara = r#"
 rule Wide { strings: $a = "x" wide condition: $a }
+rule WideRegex { strings: $a = /x+/ wide condition: $a }
 rule Jumps { strings: $a = { 4D [2-4] 5A } condition: $a }
 rule Count { strings: $a = "x" $b = "y" condition: 2 of them }
 rule Fine { strings: $a = "ok" condition: $a }
 "#;
     let conversion = import_source(yara).expect("import");
-    assert_eq!(conversion.converted, 1);
+    // Wide text strings convert; wide regexes do not.
+    assert_eq!(conversion.converted, 2);
+    assert!(conversion.output.contains("encoding = \"wide\""));
     let reasons = conversion
         .skipped
         .iter()
@@ -135,7 +138,7 @@ rule Fine { strings: $a = "ok" condition: $a }
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        reasons.contains("Wide: string $a uses unsupported modifier 'wide'"),
+        reasons.contains("WideRegex: string $a uses 'wide' on a hex or regex string"),
         "{reasons}"
     );
     assert!(
@@ -217,4 +220,54 @@ fn conditions_with_multibyte_text_do_not_panic() {
         let conversion = import_source(&yara).expect("import");
         assert_eq!(conversion.converted + conversion.skipped.len(), 1);
     }
+}
+
+#[test]
+fn wide_literals_and_filesize_bounds_round_trip() {
+    let yara = r#"rule W {
+    strings:
+        $a = "Kernel32" ascii wide nocase
+    condition:
+        $a and filesize < 1KB and filesize > 0
+}"#;
+    let conversion = import_source(yara).expect("import");
+    assert_eq!(conversion.converted, 1, "{:?}", conversion.skipped);
+    let toml = &conversion.output;
+    assert!(toml.contains("encoding = \"both\""), "{toml}");
+    assert!(toml.contains("min_size = 1"), "{toml}");
+    assert!(toml.contains("max_size = 1023"), "{toml}");
+
+    let wide: Vec<u8> = "xx KERNEL32 yy"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let scan = |data: &[u8]| {
+        super::super::scan_source(toml, data)
+            .expect("scan")
+            .matched_rules
+    };
+    assert_eq!(scan(&wide), 1, "UTF-16LE text matches");
+    assert_eq!(scan(b"load kernel32.dll"), 1, "ASCII text matches");
+    assert_eq!(scan(b"k\0e\0r\0n\0"), 0);
+    let mut large = b"kernel32".to_vec();
+    large.resize(2048, b' ');
+    assert_eq!(scan(&large), 0, "max_size excludes larger input");
+
+    // Export writes the modifiers and bounds back as YARA.
+    let exported = export_definitions(&definitions(toml));
+    assert!(
+        exported.output.contains("ascii wide nocase"),
+        "{}",
+        exported.output
+    );
+    assert!(
+        exported.output.contains("filesize >= 1"),
+        "{}",
+        exported.output
+    );
+    assert!(
+        exported.output.contains("filesize <= 1023"),
+        "{}",
+        exported.output
+    );
 }
