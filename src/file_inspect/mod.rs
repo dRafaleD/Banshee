@@ -10,16 +10,26 @@ use sha2::{Digest, Sha256};
 use xz2::read::XzDecoder;
 
 mod archive;
+mod authenticode;
 mod binary;
+mod container;
 mod document;
+mod dotnet;
 mod elf;
+mod email;
+mod macho;
 mod ordinals;
 mod pe;
 mod pe_extra;
+mod rtf;
+mod script;
 
 use archive::{inspect_tar, inspect_zip, is_tar, is_zip};
+pub use authenticode::{AuthenticodeReport, CertificateSummary, NestedSigner};
 pub use document::{DocumentProperty, DocumentReport, ExternalTarget};
+pub use dotnet::DotNetReport;
 use elf::inspect_elf;
+use macho::inspect_macho;
 use pe::inspect_pe;
 pub use pe_extra::{RichEntry, RichHeader};
 
@@ -107,6 +117,48 @@ pub struct ExecutableReport {
     pub rich_header: Option<RichHeader>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_callbacks: Option<usize>,
+    /// Architectures of a Mach-O universal binary; details describe the first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub universal_architectures: Vec<String>,
+    /// CLI metadata of a managed (.NET) PE file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dotnet: Option<DotNetReport>,
+    /// Authenticode certificate details (not verified).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authenticode: Option<AuthenticodeReport>,
+}
+
+impl ExecutableReport {
+    fn is_macho(&self) -> bool {
+        self.format == "Mach-O"
+    }
+
+    /// Label for `signature_present`, which means different things per format.
+    pub fn signature_label(&self) -> &'static str {
+        if self.is_macho() {
+            "Code signature present"
+        } else {
+            "PE certificate table present"
+        }
+    }
+
+    /// Label for `interpreter`.
+    pub fn interpreter_label(&self) -> &'static str {
+        if self.is_macho() {
+            "Dynamic linker"
+        } else {
+            "ELF interpreter"
+        }
+    }
+
+    /// Label for the `needed_libraries` count.
+    pub fn dependencies_label(&self) -> &'static str {
+        if self.is_macho() {
+            "Mach-O linked libraries"
+        } else {
+            "ELF dynamic dependencies"
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -220,15 +272,56 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
             max_entries,
             &mut report,
         )?;
+    } else if container::is_iso(bytes) {
+        report.format = "ISO 9660 disk image".to_owned();
+        report.archive = Some(container::inspect_iso(
+            bytes,
+            max_entries,
+            &mut report.findings,
+        ));
+    } else if container::is_cab(bytes) {
+        report.format = "Microsoft cabinet (CAB)".to_owned();
+        report.archive = Some(container::inspect_cab(
+            bytes,
+            max_entries,
+            &mut report.findings,
+        ));
     } else if let Some(executable) = inspect_elf(bytes)? {
         report.format = "ELF executable".to_owned();
         attach_executable(&mut report, executable);
     } else if let Some(executable) = inspect_pe(bytes)? {
-        report.format = "PE executable".to_owned();
+        report.format = if executable.dotnet.is_some() {
+            "PE executable (.NET)".to_owned()
+        } else {
+            "PE executable".to_owned()
+        };
+        attach_executable(&mut report, executable);
+    } else if let Some(executable) = inspect_macho(bytes)? {
+        report.format = if executable.universal_architectures.is_empty() {
+            "Mach-O executable".to_owned()
+        } else {
+            format!(
+                "Mach-O universal binary ({})",
+                executable.universal_architectures.join(", ")
+            )
+        };
         attach_executable(&mut report, executable);
     } else if document::is_pdf(bytes) {
         report.format = "PDF document".to_owned();
         attach_document(&mut report, document::inspect_pdf(bytes));
+    } else if rtf::is_rtf(bytes) {
+        report.format = "RTF document".to_owned();
+        attach_document(&mut report, rtf::inspect_rtf(bytes));
+    } else if let Some(format) = container::identify_only(bytes) {
+        report.format = format.to_owned();
+    } else if email::looks_like_email(&report.path, bytes) {
+        report.format = "Email message".to_owned();
+        attach_document(&mut report, email::inspect(bytes));
+    } else if let Some(language) = script::language(&report.path)
+        && let Some(document) = script::inspect(bytes, language)
+    {
+        report.format = document.kind.clone();
+        attach_document(&mut report, document);
     }
 
     Ok(report)
@@ -260,6 +353,8 @@ fn inspect_compressed<R: Read>(
     } else if let Some(executable) = inspect_elf(&payload)? {
         attach_executable(report, executable);
     } else if let Some(executable) = inspect_pe(&payload)? {
+        attach_executable(report, executable);
+    } else if let Some(executable) = inspect_macho(&payload)? {
         attach_executable(report, executable);
     }
     Ok(())
@@ -609,7 +704,17 @@ mod tests {
                 .is_some_and(|overlay| overlay.includes_certificate_table)
         );
         assert!(executable.suspicious_properties.is_empty());
-        assert!(executable.parse_warnings.is_empty());
+        // The fixture's certificate table is filler, so only the Authenticode
+        // reader may complain about it.
+        assert!(
+            executable
+                .parse_warnings
+                .iter()
+                .all(|warning| warning.contains("PKCS#7")),
+            "{:?}",
+            executable.parse_warnings
+        );
+        assert!(executable.authenticode.is_none());
     }
 
     #[test]

@@ -699,6 +699,157 @@ pub fn write_pe_metadata(
     if let Some(callbacks) = executable.tls_callbacks {
         writeln!(output, "{prefix}TLS callbacks: {callbacks}")?;
     }
+    write_managed_and_signature(output, executable, prefix)
+}
+
+/// .NET metadata and Authenticode lines, as `Label: value`.
+pub fn write_managed_and_signature(
+    output: &mut dyn Write,
+    executable: &crate::file_inspect::ExecutableReport,
+    prefix: &str,
+) -> io::Result<()> {
+    if let Some(dotnet) = &executable.dotnet {
+        write_dotnet(output, dotnet, prefix)?;
+    }
+    if let Some(signature) = &executable.authenticode {
+        write_authenticode(output, signature, prefix)?;
+    }
+    Ok(())
+}
+
+fn write_authenticode(
+    output: &mut dyn Write,
+    signature: &crate::file_inspect::AuthenticodeReport,
+    prefix: &str,
+) -> io::Result<()> {
+    match &signature.signer {
+        Some(signer) => writeln!(
+            output,
+            "{prefix}Authenticode signer: {} (issued by {}); valid {} to {}{}",
+            metadata_name(&signer.subject),
+            metadata_name(&signer.issuer),
+            signer.not_before,
+            signer.not_after,
+            if signer.self_signed {
+                "; self-signed"
+            } else {
+                ""
+            }
+        )?,
+        None => writeln!(output, "{prefix}Authenticode signer: not identified")?,
+    }
+    writeln!(
+        output,
+        "{prefix}Authenticode: digest {}; timestamped {}; {} certificate(s){}; signature NOT verified",
+        signature.digest_algorithm,
+        if signature.timestamped { "yes" } else { "no" },
+        signature.certificates.len(),
+        if signature.nested_signatures > 0 {
+            format!("; {} nested signature(s)", signature.nested_signatures)
+        } else {
+            String::new()
+        }
+    )?;
+    for nested in &signature.nested_signers {
+        writeln!(
+            output,
+            "{prefix}Authenticode nested signer: {} (issued by {}); digest {}",
+            metadata_name(&nested.signer.subject),
+            metadata_name(&nested.signer.issuer),
+            nested.digest_algorithm
+        )?;
+    }
+    let chain: Vec<String> = signature
+        .certificates
+        .iter()
+        .map(|certificate| certificate.subject.clone())
+        .collect();
+    if !chain.is_empty() {
+        writeln!(
+            output,
+            "{prefix}Authenticode certificates: {}",
+            joined(&chain, 8)
+        )?;
+    }
+    Ok(())
+}
+
+/// Keeps metadata names readable in both terminals and Markdown: anything
+/// outside a conservative identifier set becomes `?`.
+fn metadata_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_alphanumeric() || "._-!+ ,()[]:@$`<>".contains(character) {
+                character
+            } else {
+                '?'
+            }
+        })
+        .collect::<String>()
+        .replace('`', "'")
+}
+
+fn joined(values: &[String], limit: usize) -> String {
+    let mut text = values
+        .iter()
+        .take(limit)
+        .map(|value| metadata_name(value))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if values.len() > limit {
+        text.push_str(&format!(", … ({} more)", values.len() - limit));
+    }
+    text
+}
+
+fn write_dotnet(
+    output: &mut dyn Write,
+    dotnet: &crate::file_inspect::DotNetReport,
+    prefix: &str,
+) -> io::Result<()> {
+    let identity = match (&dotnet.assembly_name, &dotnet.assembly_version) {
+        (Some(name), Some(version)) => format!("{} {version}", metadata_name(name)),
+        (Some(name), None) => metadata_name(name),
+        _ => "(no assembly manifest; module only)".to_owned(),
+    };
+    writeln!(
+        output,
+        "{prefix}.NET assembly: {identity}; runtime {}; {} types, {} methods{}",
+        metadata_name(&dotnet.runtime_version),
+        dotnet.type_count,
+        dotnet.method_count,
+        if dotnet.flags.is_empty() {
+            String::new()
+        } else {
+            format!("; {}", dotnet.flags.join(", "))
+        }
+    )?;
+    if !dotnet.assembly_references.is_empty() {
+        writeln!(
+            output,
+            "{prefix}.NET assembly references: {}",
+            joined(&dotnet.assembly_references, 20)
+        )?;
+    }
+    if !dotnet.pinvoke_imports.is_empty() {
+        writeln!(
+            output,
+            "{prefix}.NET P/Invoke imports ({}): {}",
+            dotnet.pinvoke_imports.len(),
+            joined(&dotnet.pinvoke_imports, 30)
+        )?;
+    }
+    if !dotnet.notable_references.is_empty() {
+        writeln!(
+            output,
+            "{prefix}.NET notable references: {}",
+            joined(&dotnet.notable_references, 20)
+        )?;
+    }
+    if dotnet.lists_truncated {
+        writeln!(output, "{prefix}.NET lists truncated at safety limit")?;
+    }
     Ok(())
 }
 

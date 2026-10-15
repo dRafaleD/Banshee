@@ -111,7 +111,7 @@ private rule AnyMarker {
     assert!(toml.contains(r#"tags = ["dropper", "windows"]"#));
     assert!(toml.contains(r#"pattern = "cmd\\.exe /c [a-z]+""#));
     // "any of them" becomes one alternation, with hex as a byte-level group.
-    assert!(toml.contains(r#"pattern = "alpha|(?s-u:\\x62\\x65\\x74\\x61)""#));
+    assert!(toml.contains(r#"pattern = "(?:alpha)|(?s-u:\\x62\\x65\\x74\\x61)""#));
 
     let scan = super::super::scan_source(toml, b"xx BETA beta yy").expect("scan");
     assert_eq!(scan.matched_rules, 1);
@@ -122,22 +122,21 @@ private rule AnyMarker {
 fn import_reports_unsupported_constructs_by_rule() {
     let yara = r#"
 rule Wide { strings: $a = "x" wide condition: $a }
+rule WideRegex { strings: $a = /x+/ wide condition: $a }
 rule Jumps { strings: $a = { 4D [2-4] 5A } condition: $a }
 rule Count { strings: $a = "x" $b = "y" condition: 2 of them }
 rule Fine { strings: $a = "ok" condition: $a }
 "#;
     let conversion = import_source(yara).expect("import");
-    assert_eq!(conversion.converted, 1);
+    // Wide text and regex strings convert.
+    assert_eq!(conversion.converted, 3);
+    assert!(conversion.output.contains("encoding = \"wide\""));
     let reasons = conversion
         .skipped
         .iter()
         .map(|rule| format!("{}: {}", rule.rule, rule.reason))
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(
-        reasons.contains("Wide: string $a uses unsupported modifier 'wide'"),
-        "{reasons}"
-    );
     assert!(
         reasons.contains("Jumps: hex string $a uses jumps"),
         "{reasons}"
@@ -217,4 +216,113 @@ fn conditions_with_multibyte_text_do_not_panic() {
         let conversion = import_source(&yara).expect("import");
         assert_eq!(conversion.converted + conversion.skipped.len(), 1);
     }
+}
+
+#[test]
+fn wide_literals_and_filesize_bounds_round_trip() {
+    let yara = r#"rule W {
+    strings:
+        $a = "Kernel32" ascii wide nocase
+    condition:
+        $a and filesize < 1KB and filesize > 0
+}"#;
+    let conversion = import_source(yara).expect("import");
+    assert_eq!(conversion.converted, 1, "{:?}", conversion.skipped);
+    let toml = &conversion.output;
+    assert!(toml.contains("encoding = \"both\""), "{toml}");
+    assert!(toml.contains("min_size = 1"), "{toml}");
+    assert!(toml.contains("max_size = 1023"), "{toml}");
+
+    let wide: Vec<u8> = "xx KERNEL32 yy"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let scan = |data: &[u8]| {
+        super::super::scan_source(toml, data)
+            .expect("scan")
+            .matched_rules
+    };
+    assert_eq!(scan(&wide), 1, "UTF-16LE text matches");
+    assert_eq!(scan(b"load kernel32.dll"), 1, "ASCII text matches");
+    assert_eq!(scan(b"k\0e\0r\0n\0"), 0);
+    let mut large = b"kernel32".to_vec();
+    large.resize(2048, b' ');
+    assert_eq!(scan(&large), 0, "max_size excludes larger input");
+
+    // Export writes the modifiers and bounds back as YARA.
+    let exported = export_definitions(&definitions(toml));
+    assert!(
+        exported.output.contains("ascii wide nocase"),
+        "{}",
+        exported.output
+    );
+    assert!(
+        exported.output.contains("filesize >= 1"),
+        "{}",
+        exported.output
+    );
+    assert!(
+        exported.output.contains("filesize <= 1023"),
+        "{}",
+        exported.output
+    );
+}
+
+#[test]
+fn proximity_loops_and_wide_regexes_round_trip() {
+    let yara = r#"rule Near {
+    strings:
+        $anchor = "Get-Clipboard" ascii wide nocase
+        $write = "Add-Content" ascii wide nocase
+        $chain = /-Value[ \t]+\$[a-z]+/ ascii wide nocase
+    condition:
+        filesize <= 2097152 and
+        for any i in (1 .. #anchor) : (
+            $write in (@anchor[i] .. @anchor[i] + 128) and
+            $chain in (@anchor[i] .. @anchor[i] + 128)
+        )
+}"#;
+    let conversion = import_source(yara).expect("import");
+    assert_eq!(conversion.converted, 1, "{:?}", conversion.skipped);
+    let toml = &conversion.output;
+    assert!(toml.contains("within = 128"), "{toml}");
+    assert!(toml.contains("pattern = \"Get-Clipboard\""), "{toml}");
+    let scan = |data: &[u8]| {
+        super::super::scan_source(toml, data)
+            .expect("scan")
+            .matched_rules
+    };
+
+    let near = b"$t = Get-Clipboard; Add-Content log.txt -Value $t";
+    assert_eq!(scan(near), 1, "all markers follow the anchor closely");
+    let wide: Vec<u8> = String::from_utf8_lossy(near)
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    assert_eq!(scan(&wide), 1, "the same text as UTF-16LE matches");
+
+    let mut far = b"Get-Clipboard".to_vec();
+    far.extend(vec![b' '; 300]);
+    far.extend(b"Add-Content x -Value $t");
+    assert_eq!(scan(&far), 0, "markers beyond the window do not match");
+    let before = b"Add-Content x -Value $t; Get-Clipboard";
+    assert_eq!(scan(before), 0, "markers must follow the anchor");
+
+    // A later anchor occurrence can satisfy the window.
+    let mut second = b"Get-Clipboard".to_vec();
+    second.extend(vec![b' '; 300]);
+    second.extend(b"Get-Clipboard | Add-Content x -Value $t");
+    assert_eq!(scan(&second), 1);
+
+    let exported = export_definitions(&definitions(toml));
+    assert!(
+        exported.output.contains("for any i in (1 .. #p) : ( $all0 in (@p[i] .. @p[i] + 128) and $all1 in (@p[i] .. @p[i] + 128) )"),
+        "{}",
+        exported.output
+    );
+    assert!(
+        exported.output.contains("ascii wide nocase"),
+        "{}",
+        exported.output
+    );
 }

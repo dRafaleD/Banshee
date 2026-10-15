@@ -142,6 +142,7 @@ dependencies = [
  "md4",
  "percent-encoding",
  "regex",
+ "regex-syntax",
  "serde",
  "serde_json",
  "sha1",

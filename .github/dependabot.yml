@@ -1,17 +1,19 @@
 version: 2
+# Version-update pull requests are off (limit 0): updates are applied by hand
+# so the repository keeps only master plus one working branch.
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
   - package-ecosystem: cargo
     directory: /fuzz
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0

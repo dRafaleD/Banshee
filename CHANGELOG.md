@@ -5,6 +5,69 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+### Added
+
+- `banshee strings` lists printable ASCII and UTF-16LE strings with their
+  offsets (`--min-length`, `--encoding`, `--plain`, `--json`); `--max-strings`
+  bounds the list while the total is still counted.
+- Mach-O inspection in `file inspect`, `report`, `scan` and evidence bundles:
+  CPU, file type, segments with protections and entropy, linked dylibs,
+  `LC_RPATH`, dynamic linker, entry point and code-signature presence.
+  Universal binaries list their architectures and describe the first slice.
+  Writable and executable segments, stack execution, non-PIE executables,
+  encrypted images and libraries loaded from writable or relative paths are
+  flagged. Report JSON gains an optional `universal_architectures` field.
+- RTF inspection: object classes from `\objclass` and the OLE1 header in
+  `\objdata`, Equation Editor, Package, OLE2Link and script objects,
+  automatically updating objects, remote templates, DDE fields and
+  `INCLUDEPICTURE`/`INCLUDETEXT` fields that fetch remote or UNC content.
+- .NET metadata for managed PE files: runtime version, CLI flags, assembly
+  identity, referenced assemblies, P/Invoke imports and notable framework
+  references (reflection loading, Base64, decryption, process and network
+  calls). Obfuscator markers, P/Invoked process-injection APIs and
+  `Assembly.Load(byte[])` combined with decoding are flagged. Identity and
+  references matched .NET reflection on 230 framework assemblies.
+- Authenticode details for signed PE files: signer and issuer, validity,
+  digest algorithm, timestamp presence, embedded certificates and the signers
+  of nested signatures. Nothing is verified. Matched Get-AuthenticodeSignature
+  on 150 embedded-signed files. The text report now also prints imphash, Rich
+  header, TLS, .NET and Authenticode lines, and HTML reports show the latter two.
+- Script inspection for PowerShell, VBScript, JScript, HTA and batch files:
+  encoded commands, download-and-execute cradles, AMSI and Defender tampering,
+  in-memory loading, LOLBin abuse, shadow-copy deletion and persistence, each
+  quoting its line. Constructs common in admin scripts are only reported next
+  to a high-signal behavior (3 of 400 bundled Windows scripts are flagged).
+- Email (`.eml`) inspection: headers, Received chain, SPF/DKIM/DMARC results,
+  attachments with SHA-256 and links; spoofed sender domains, risky or
+  double-extension attachments and links whose text shows another domain are
+  flagged.
+- ISO 9660 images (with Joliet names) and cabinets are listed like archives,
+  flagging executables, shortcuts, scripts and hidden files; 7-Zip, RAR, VHD,
+  VHDX and WIM files are identified.
+- `banshee hexdump` shows a `hexdump -C` style window (`--offset`, `--length`,
+  `--width`); `strings` tags URLs, IPs, domains, emails, paths, registry keys,
+  commands, user agents and Base64 in JSON, and `--interesting` keeps only
+  those.
+- Console `history`, `!N`, `save <file>` and `run <file>` record, repeat,
+  save and replay a session's commands.
+- Local rules: `encoding = "wide" | "both"` matches literal and regex
+  patterns as UTF-16LE text, `min_size`/`max_size` bound the input size, and
+  `within = N` on an `all` condition requires it to follow one primary match
+  within N bytes. YARA import maps `ascii`/`wide` modifiers, `filesize`
+  comparisons and `for any i in (1..#a) : ($b in (@a[i]..@a[i]+N))` proximity
+  loops to them, and export writes them back. All 60 AsphDex YARA library
+  rules now convert and match its fixtures as YARA does.
+
+### Fixed
+
+- YARA import no longer misreads rule boundaries when a regex string contains
+  `{` or `}`.
+
+### Changed
+
+- Executable signature, linker and dependency labels follow the format (for
+  example "Code signature present" for Mach-O instead of the PE wording).
+
 ## 0.2.0 — 2026-10-14
 
 ### Added

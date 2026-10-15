@@ -54,6 +54,8 @@ md4 = "0.10"
 md-5 = "0.10"
 percent-encoding = "2.3"
 regex = "1.11"
+# Parses regexes so YARA `wide` regexes can be rewritten for UTF-16LE text.
+regex-syntax = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha1 = "0.10"

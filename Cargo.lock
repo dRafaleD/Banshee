@@ -154,6 +154,7 @@ dependencies = [
  "predicates",
  "rcgen",
  "regex",
+ "regex-syntax",
  "rustyline",
  "serde",
  "serde_json",

@@ -40,7 +40,7 @@ const CATEGORIES: &[Category] = &[
         key_tr: "dosyalar",
         title: "FILES & REPORTS",
         title_tr: "DOSYALAR VE RAPORLAR",
-        commands: &["file", "report", "scan", "rules"],
+        commands: &["file", "strings", "hexdump", "report", "scan", "rules"],
         examples: &[
             "file inspect suspicious.zip",
             "report suspicious.exe",
@@ -128,6 +128,24 @@ const CONSOLE: &[(&str, &str, &str, &str)] = &[
         "Dizin, açık dosya ve dili göster",
     ),
     (
+        "history / !N",
+        "history / !N",
+        "List this session's commands / run command N again",
+        "Bu oturumun komutlarını listele / N numaralı komutu yeniden çalıştır",
+    ),
+    (
+        "save <file>",
+        "save <dosya>",
+        "Save the history as a script (add --force to replace a file)",
+        "Geçmişi betik olarak kaydet (dosyanın üzerine yazmak için --force)",
+    ),
+    (
+        "run <file>",
+        "run <dosya>",
+        "Run the commands in a saved script",
+        "Kayıtlı bir betikteki komutları çalıştır",
+    ),
+    (
         "ls [directory]",
         "ls [dizin]",
         "List up to 200 entries",
@@ -174,6 +192,8 @@ fn describe_turkish(name: &str) -> &'static str {
         "extract" => "Metin, dosya veya stdin'den IOC çıkar ve normalleştir",
         "watch" => "Eklenen log satırlarını izle ve yerelde analiz et",
         "file" => "Arşivleri, sıkıştırılmış akışları ve yürütülebilir başlıkları çevrimdışı incele",
+        "strings" => "Okunabilir ASCII ve UTF-16LE dizgeleri ofsetleriyle çıkar",
+        "hexdump" => "Girdinin bir bölümünü onaltılık döküm (ofset, bayt, ASCII) olarak göster",
         "report" => "Tek bir yerel dosya için birleşik çevrimdışı analiz raporu oluştur",
         "scan" => "Yerel dosya veya dizini sınırlı çevrimdışı analizle tara",
         "rules" => "Yerel TOML tespit kurallarını doğrula ve kurallarla tara",

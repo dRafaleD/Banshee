@@ -14,8 +14,8 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use super::{
-    RuleCondition, RuleDefinition, RuleFileType, RuleKind, compile_source, load_and_compile,
-    parse_hex_pattern,
+    RuleCondition, RuleDefinition, RuleFileType, RuleKind, TextEncoding, compile_source,
+    literal_pattern, load_and_compile, parse_hex_pattern, regex_pattern,
 };
 
 /// Compiles a regular expression once and reuses it for every rule.
@@ -108,7 +108,12 @@ fn export_rule(rule: &RuleDefinition, names: &mut HashSet<String>) -> Result<Exp
     let mut warnings = Vec::new();
     let mut strings = vec![(
         "$p".to_owned(),
-        yara_string(rule.kind, &rule.pattern, rule.case_insensitive)?,
+        yara_string(
+            rule.kind,
+            &rule.pattern,
+            rule.case_insensitive,
+            rule.encoding,
+        )?,
     )];
     for (index, condition) in rule.all.iter().enumerate() {
         strings.push((format!("$all{index}"), condition_string(condition)?));
@@ -122,7 +127,29 @@ fn export_rule(rule: &RuleDefinition, names: &mut HashSet<String>) -> Result<Exp
     } else {
         "$p".to_owned()
     }];
-    terms.extend((0..rule.all.len()).map(|index| format!("$all{index}")));
+    terms.extend(
+        rule.all
+            .iter()
+            .enumerate()
+            .filter(|(_, condition)| condition.within.is_none())
+            .map(|(index, _)| format!("$all{index}")),
+    );
+    let near: Vec<String> = rule
+        .all
+        .iter()
+        .enumerate()
+        .filter_map(|(index, condition)| {
+            condition
+                .within
+                .map(|bytes| format!("$all{index} in (@p[i] .. @p[i] + {bytes})"))
+        })
+        .collect();
+    if !near.is_empty() {
+        terms.push(format!(
+            "for any i in (1 .. #p) : ( {} )",
+            near.join(" and ")
+        ));
+    }
     if !rule.any.is_empty() {
         terms.push("any of ($any*)".to_owned());
     }
@@ -152,6 +179,12 @@ fn export_rule(rule: &RuleDefinition, names: &mut HashSet<String>) -> Result<Exp
     if let Some(maximum) = rule.max_entropy {
         terms.push(format!("math.entropy(0, filesize) <= {maximum}"));
         uses_math = true;
+    }
+    if let Some(minimum) = rule.min_size {
+        terms.push(format!("filesize >= {minimum}"));
+    }
+    if let Some(maximum) = rule.max_size {
+        terms.push(format!("filesize <= {maximum}"));
     }
 
     let name = unique_identifier(&rule.id, names);
@@ -206,13 +239,24 @@ fn condition_string(condition: &RuleCondition) -> Result<String> {
         condition.kind,
         &condition.pattern,
         condition.case_insensitive,
+        condition.encoding,
     )
 }
 
-fn yara_string(kind: RuleKind, pattern: &str, case_insensitive: bool) -> Result<String> {
+fn yara_string(
+    kind: RuleKind,
+    pattern: &str,
+    case_insensitive: bool,
+    encoding: TextEncoding,
+) -> Result<String> {
     let nocase = if case_insensitive { " nocase" } else { "" };
+    let width = match encoding {
+        TextEncoding::Ascii => "",
+        TextEncoding::Wide => " wide",
+        TextEncoding::Both => " ascii wide",
+    };
     match kind {
-        RuleKind::Literal => Ok(format!("{}{nocase}", quote_text(pattern.as_bytes()))),
+        RuleKind::Literal => Ok(format!("{}{width}{nocase}", quote_text(pattern.as_bytes()))),
         RuleKind::Hex => {
             let tokens = parse_hex_pattern(pattern)?
                 .iter()
@@ -228,7 +272,7 @@ fn yara_string(kind: RuleKind, pattern: &str, case_insensitive: bool) -> Result<
                 ""
             };
             let dotall = if flags.contains('s') { "s" } else { "" };
-            Ok(format!("/{body}/{dotall}{nocase}"))
+            Ok(format!("/{body}/{dotall}{width}{nocase}"))
         }
     }
 }
@@ -341,6 +385,9 @@ struct YaraString {
     kind: RuleKind,
     pattern: String,
     case_insensitive: bool,
+    encoding: TextEncoding,
+    /// Bytes after the anchor (primary) match, for proximity conditions.
+    within: Option<usize>,
 }
 
 pub fn import_file(path: &Path) -> Result<Conversion> {
@@ -460,6 +507,9 @@ fn rule_blocks(source: &str) -> Result<Vec<RuleBlock>> {
         let mut depth = 1;
         let mut quote: Option<char> = None;
         let mut end = None;
+        // Last significant character outside strings: a `/` right after `=`
+        // opens a regex, whose braces must not count.
+        let mut previous = '{';
         let mut characters = source[body_start..].char_indices();
         while let Some((offset, character)) = characters.next() {
             match quote {
@@ -470,6 +520,7 @@ fn rule_blocks(source: &str) -> Result<Vec<RuleBlock>> {
                 Some(_) => {}
                 None => match character {
                     '"' => quote = Some('"'),
+                    '/' if previous == '=' => quote = Some('/'),
                     '{' => depth += 1,
                     '}' => {
                         depth -= 1;
@@ -480,6 +531,9 @@ fn rule_blocks(source: &str) -> Result<Vec<RuleBlock>> {
                     }
                     _ => {}
                 },
+            }
+            if quote.is_none() && !character.is_whitespace() {
+                previous = character;
             }
         }
         let end = end.with_context(|| format!("rule '{}' is not closed", &captures[1]))?;
@@ -586,11 +640,19 @@ fn import_rule(block: &RuleBlock) -> Result<String> {
             writeln!(toml, "{key} = {value:?}").expect("string write");
         }
     }
+    for (key, value) in [("min_size", plan.min_size), ("max_size", plan.max_size)] {
+        if let Some(value) = value {
+            writeln!(toml, "{key} = {value}").expect("string write");
+        }
+    }
     let primary = plan.primary;
     writeln!(toml, "kind = {}", toml_string(&primary.kind.to_string())).expect("string write");
     writeln!(toml, "pattern = {}", toml_string(&primary.pattern)).expect("string write");
     if primary.case_insensitive {
         writeln!(toml, "case_insensitive = true").expect("string write");
+    }
+    if primary.encoding != TextEncoding::Ascii {
+        writeln!(toml, "encoding = \"{}\"", primary.encoding).expect("string write");
     }
     if plan.min_matches > 1 {
         writeln!(toml, "min_matches = {}", plan.min_matches).expect("string write");
@@ -629,6 +691,12 @@ fn import_rule(block: &RuleBlock) -> Result<String> {
             writeln!(toml, "pattern = {}", toml_string(&condition.pattern)).expect("string write");
             if condition.case_insensitive {
                 writeln!(toml, "case_insensitive = true").expect("string write");
+            }
+            if condition.encoding != TextEncoding::Ascii {
+                writeln!(toml, "encoding = \"{}\"", condition.encoding).expect("string write");
+            }
+            if let Some(bytes) = condition.within {
+                writeln!(toml, "within = {bytes}").expect("string write");
             }
         }
     }
@@ -670,12 +738,24 @@ fn parse_strings(section: &str) -> Result<Vec<(String, YaraString)>> {
         let value = &captures[2];
         let modifiers = captures[3].split_whitespace().collect::<Vec<_>>();
         let mut case_insensitive = false;
+        let (mut ascii, mut wide) = (false, false);
         for modifier in &modifiers {
             match *modifier {
                 "nocase" => case_insensitive = true,
-                "ascii" | "private" => {}
+                "ascii" => ascii = true,
+                "wide" => wide = true,
+                "private" => {}
                 other => bail!("string ${name} uses unsupported modifier '{other}'"),
             }
+        }
+        // YARA: ascii is the default; wide alone means UTF-16LE only.
+        let encoding = match (ascii, wide) {
+            (_, false) => TextEncoding::Ascii,
+            (false, true) => TextEncoding::Wide,
+            (true, true) => TextEncoding::Both,
+        };
+        if wide && value.starts_with('{') {
+            bail!("string ${name} uses 'wide' on a hex string");
         }
         let string = if let Some(text) = value.strip_prefix('"') {
             let bytes = unescape_yara_text(&text[..text.len() - 1])
@@ -685,7 +765,10 @@ fn parse_strings(section: &str) -> Result<Vec<(String, YaraString)>> {
                     kind: RuleKind::Literal,
                     pattern: text,
                     case_insensitive,
+                    encoding,
+                    within: None,
                 },
+                Err(_) if wide => bail!("string ${name} is not UTF-8 text and uses 'wide'"),
                 // Non-UTF-8 text strings become exact hex patterns.
                 Err(error) => YaraString {
                     kind: RuleKind::Hex,
@@ -696,6 +779,8 @@ fn parse_strings(section: &str) -> Result<Vec<(String, YaraString)>> {
                         .collect::<Vec<_>>()
                         .join(" "),
                     case_insensitive: false,
+                    encoding: TextEncoding::Ascii,
+                    within: None,
                 },
             }
         } else if let Some(hex) = value.strip_prefix('{') {
@@ -709,6 +794,8 @@ fn parse_strings(section: &str) -> Result<Vec<(String, YaraString)>> {
                 kind: RuleKind::Hex,
                 pattern: hex.split_whitespace().collect::<Vec<_>>().join(" "),
                 case_insensitive: false,
+                encoding: TextEncoding::Ascii,
+                within: None,
             }
         } else {
             let end = value.rfind('/').expect("regex has a closing slash");
@@ -719,6 +806,8 @@ fn parse_strings(section: &str) -> Result<Vec<(String, YaraString)>> {
                 kind: RuleKind::Regex,
                 pattern: format!("{dotall}{body}"),
                 case_insensitive: case_insensitive || flags.contains('i'),
+                encoding,
+                within: None,
             }
         };
         strings.push((name, string));
@@ -761,6 +850,8 @@ struct ConditionPlan {
     file_types: Vec<RuleFileType>,
     min_entropy: Option<f64>,
     max_entropy: Option<f64>,
+    min_size: Option<u64>,
+    max_size: Option<u64>,
 }
 
 fn plan_condition(condition: &str, strings: &[(String, YaraString)]) -> Result<ConditionPlan> {
@@ -780,6 +871,13 @@ fn plan_condition(condition: &str, strings: &[(String, YaraString)]) -> Result<C
     let mut min_matches = 1;
     let mut file_types = Vec::new();
     let (mut min_entropy, mut max_entropy) = (None, None);
+    let (mut min_size, mut max_size): (Option<u64>, Option<u64>) = (None, None);
+    let mut has_proximity = false;
+    let filesize = regex!(r"^filesize (<=|<|>=|>) (\d+)(KB|MB)?$");
+    let proximity = regex!(r"^for any i in \(1 ?\.\. ?#([A-Za-z0-9_]+)\) ?: ?\((.*)\)$");
+    let near = regex!(
+        r"^\$([A-Za-z0-9_]+) in \(@([A-Za-z0-9_]+)\[i\] ?\.\. ?@([A-Za-z0-9_]+)\[i\] ?\+ ?(\d+)\)$"
+    );
     let count = regex!(r"^#([A-Za-z0-9_]*) (>=|>) (\d+)$");
     let set = regex!(r"^(any|all) of \(([^)]*)\)$");
     let entropy = regex!(r"^math\.entropy\(0, ?filesize\) (>=|<=) ([0-9]+(?:\.[0-9]+)?)$");
@@ -828,6 +926,58 @@ fn plan_condition(condition: &str, strings: &[(String, YaraString)]) -> Result<C
                 min_entropy = Some(value);
             } else {
                 max_entropy = Some(value);
+            }
+        } else if let Some(captures) = proximity.captures(term) {
+            // `for any i in (1..#a) : ($b in (@a[i]..@a[i] + N) and ...)`:
+            // $a becomes the primary pattern, the others `within` it.
+            let anchor = &captures[1];
+            let mut near_anchor = Vec::new();
+            for part in split_top_level(captures[2].trim(), " and ") {
+                let part = strip_parentheses(part.trim());
+                let item = near.captures(part).with_context(|| {
+                    format!("unsupported proximity term '{part}' (only $x in (@a[i]..@a[i] + N))")
+                })?;
+                if &item[2] != anchor || &item[3] != anchor {
+                    bail!("proximity term '{part}' must refer to ${anchor}");
+                }
+                let mut string = lookup(&item[1])?;
+                string.within = Some(
+                    item[4]
+                        .parse::<usize>()
+                        .context("invalid proximity distance")?,
+                );
+                near_anchor.push(string);
+            }
+            if has_proximity || min_matches > 1 {
+                bail!("only one proximity loop is supported, without a string count");
+            }
+            has_proximity = true;
+            // The anchor must be the primary pattern, so it goes first.
+            required.insert(0, lookup(anchor)?);
+            required.extend(near_anchor);
+        } else if let Some(captures) = filesize.captures(term) {
+            let unit: u64 = match captures.get(3).map(|unit| unit.as_str()) {
+                Some("KB") => 1024,
+                Some("MB") => 1024 * 1024,
+                _ => 1,
+            };
+            let value = captures[2]
+                .parse::<u64>()
+                .ok()
+                .and_then(|value| value.checked_mul(unit))
+                .context("invalid filesize bound")?;
+            // Several bounds narrow each other, as YARA's `and` does.
+            match &captures[1] {
+                "<=" => max_size = Some(max_size.map_or(value, |bound| bound.min(value))),
+                "<" => {
+                    let bound = value.saturating_sub(1);
+                    max_size = Some(max_size.map_or(bound, |current| current.min(bound)));
+                }
+                ">=" => min_size = Some(min_size.map_or(value, |bound| bound.max(value))),
+                _ => {
+                    let bound = value.saturating_add(1);
+                    min_size = Some(min_size.map_or(bound, |current| current.max(bound)));
+                }
             }
         } else if let Some(captures) = identifier.captures(term) {
             required.push(lookup(&captures[1])?);
@@ -878,6 +1028,8 @@ fn plan_condition(condition: &str, strings: &[(String, YaraString)]) -> Result<C
         file_types,
         min_entropy,
         max_entropy,
+        min_size,
+        max_size,
     })
 }
 
@@ -891,11 +1043,17 @@ fn alternation(strings: &[YaraString]) -> Result<YaraString> {
         .map(|string| {
             Ok(match string.kind {
                 RuleKind::Literal if string.case_insensitive => {
-                    format!("(?i:{})", regex::escape(&string.pattern))
+                    format!("(?i:{})", literal_pattern(&string.pattern, string.encoding))
                 }
-                RuleKind::Literal => regex::escape(&string.pattern),
-                RuleKind::Regex if string.case_insensitive => format!("(?i:{})", string.pattern),
-                RuleKind::Regex => format!("(?:{})", string.pattern),
+                RuleKind::Literal => {
+                    format!("(?:{})", literal_pattern(&string.pattern, string.encoding))
+                }
+                RuleKind::Regex if string.case_insensitive => {
+                    format!("(?i:{})", regex_pattern(&string.pattern, string.encoding)?)
+                }
+                RuleKind::Regex => {
+                    format!("(?:{})", regex_pattern(&string.pattern, string.encoding)?)
+                }
                 RuleKind::Hex => {
                     let bytes = parse_hex_pattern(&string.pattern)?
                         .iter()
@@ -912,6 +1070,8 @@ fn alternation(strings: &[YaraString]) -> Result<YaraString> {
         kind: RuleKind::Regex,
         pattern: parts.join("|"),
         case_insensitive: false,
+        encoding: TextEncoding::Ascii,
+        within: None,
     })
 }
 

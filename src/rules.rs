@@ -20,6 +20,9 @@ const MAX_REFERENCE_BYTES: usize = 512;
 const MAX_TAGS_PER_RULE: usize = 32;
 const MAX_ATTACK_IDS_PER_RULE: usize = 16;
 const MAX_METADATA_BYTES: usize = 4_096;
+/// Largest `within` distance and primary matches tried as anchors.
+const MAX_WITHIN_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ANCHORS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -28,6 +31,122 @@ pub enum RuleKind {
     Regex,
     Literal,
     Hex,
+}
+
+/// Text encodings a literal pattern matches, as YARA's `ascii` and `wide`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextEncoding {
+    #[default]
+    Ascii,
+    /// UTF-16LE, as Windows stores most strings in binaries.
+    Wide,
+    /// Either of the two.
+    Both,
+}
+
+impl std::fmt::Display for TextEncoding {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Ascii => "ascii",
+            Self::Wide => "wide",
+            Self::Both => "both",
+        })
+    }
+}
+
+/// Bytes-regex source for a literal in the given encoding. The wide form
+/// interleaves the UTF-16LE high byte, so `(?i)` still folds ASCII letters.
+pub(crate) fn literal_pattern(text: &str, encoding: TextEncoding) -> String {
+    let ascii = regex::escape(text);
+    let wide = || {
+        let units: String = text
+            .encode_utf16()
+            .map(|unit| match u8::try_from(unit) {
+                Ok(byte) if byte.is_ascii() => {
+                    format!("{}\\x00", regex::escape(&char::from(byte).to_string()))
+                }
+                _ => {
+                    let [low, high] = unit.to_le_bytes();
+                    format!("\\x{low:02X}\\x{high:02X}")
+                }
+            })
+            .collect();
+        format!("(?-u:{units})")
+    };
+    match encoding {
+        TextEncoding::Ascii => ascii,
+        TextEncoding::Wide => wide(),
+        TextEncoding::Both => format!("(?:{ascii})|{}", wide()),
+    }
+}
+
+/// Rewrites a regex for UTF-16LE text, as YARA's `wide` does: every byte it
+/// matches must be followed by a zero byte. Classes keep only their ASCII part.
+pub(crate) fn wide_regex(source: &str) -> Result<String> {
+    use regex_syntax::hir::{
+        Capture, Class, ClassBytes, ClassBytesRange, Hir, HirKind, Repetition,
+    };
+
+    fn widen(hir: &Hir) -> Hir {
+        match hir.kind() {
+            HirKind::Empty => Hir::empty(),
+            HirKind::Literal(literal) => Hir::literal(
+                literal
+                    .0
+                    .iter()
+                    .flat_map(|byte| [*byte, 0])
+                    .collect::<Vec<u8>>(),
+            ),
+            HirKind::Class(class) => {
+                let bytes = match class {
+                    Class::Bytes(bytes) => bytes.clone(),
+                    Class::Unicode(unicode) => {
+                        ClassBytes::new(unicode.iter().filter(|range| range.start() <= '\x7f').map(
+                            |range| {
+                                ClassBytesRange::new(
+                                    range.start() as u8,
+                                    range.end().min('\x7f') as u8,
+                                )
+                            },
+                        ))
+                    }
+                };
+                Hir::concat(vec![Hir::class(Class::Bytes(bytes)), Hir::literal([0u8])])
+            }
+            HirKind::Look(look) => Hir::look(*look),
+            HirKind::Repetition(repetition) => Hir::repetition(Repetition {
+                min: repetition.min,
+                max: repetition.max,
+                greedy: repetition.greedy,
+                sub: Box::new(widen(&repetition.sub)),
+            }),
+            HirKind::Capture(capture) => Hir::capture(Capture {
+                index: capture.index,
+                name: capture.name.clone(),
+                sub: Box::new(widen(&capture.sub)),
+            }),
+            HirKind::Concat(parts) => Hir::concat(parts.iter().map(widen).collect()),
+            HirKind::Alternation(parts) => Hir::alternation(parts.iter().map(widen).collect()),
+        }
+    }
+
+    let hir = regex_syntax::ParserBuilder::new()
+        .unicode(false)
+        .utf8(false)
+        .build()
+        .parse(source)
+        .context("regex cannot be converted to its wide form")?;
+    Ok(widen(&hir).to_string())
+}
+
+/// Regex source for a pattern in the given encoding.
+pub(crate) fn regex_pattern(source: &str, encoding: TextEncoding) -> Result<String> {
+    Ok(match encoding {
+        TextEncoding::Ascii => source.to_owned(),
+        TextEncoding::Wide => wide_regex(source)?,
+        TextEncoding::Both => format!("(?:{source})|(?:{})", wide_regex(source)?),
+    })
 }
 
 impl std::fmt::Display for RuleKind {
@@ -132,6 +251,8 @@ struct RuleDefinition {
     pattern: String,
     #[serde(default)]
     case_insensitive: bool,
+    #[serde(default)]
+    encoding: TextEncoding,
     #[serde(default = "default_min_matches")]
     min_matches: usize,
     #[serde(default = "default_max_matches")]
@@ -152,6 +273,11 @@ struct RuleDefinition {
     min_entropy: Option<f64>,
     #[serde(default)]
     max_entropy: Option<f64>,
+    /// Input size bounds in bytes, as YARA's `filesize` comparisons.
+    #[serde(default)]
+    min_size: Option<u64>,
+    #[serde(default)]
+    max_size: Option<u64>,
     #[serde(default)]
     all: Vec<RuleCondition>,
     #[serde(default)]
@@ -166,6 +292,13 @@ struct RuleCondition {
     pattern: String,
     #[serde(default)]
     case_insensitive: bool,
+    #[serde(default)]
+    encoding: TextEncoding,
+    /// For `all` conditions: the match must start within this many bytes
+    /// after the start of one primary match, the same one for every such
+    /// condition (YARA's `$b in (@a[i]..@a[i] + N)`).
+    #[serde(default)]
+    within: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -519,6 +652,24 @@ fn validate_definition(rule: &RuleDefinition, ids: &mut HashSet<String>) -> Resu
     {
         bail!("rule '{}' min_entropy cannot exceed max_entropy", rule.id);
     }
+    if let (Some(minimum), Some(maximum)) = (rule.min_size, rule.max_size)
+        && minimum > maximum
+    {
+        bail!("rule '{}' min_size cannot exceed max_size", rule.id);
+    }
+    if rule.any.iter().any(|condition| condition.within.is_some()) {
+        bail!("rule '{}' any conditions cannot use within", rule.id);
+    }
+    if rule.all.iter().any(|condition| {
+        condition
+            .within
+            .is_some_and(|bytes| bytes > MAX_WITHIN_BYTES)
+    }) {
+        bail!(
+            "rule '{}' within cannot exceed {MAX_WITHIN_BYTES} bytes",
+            rule.id
+        );
+    }
     if rule.all.len() > MAX_CONDITIONS_PER_GROUP || rule.any.len() > MAX_CONDITIONS_PER_GROUP {
         bail!(
             "rule '{}' all/any groups are limited to {MAX_CONDITIONS_PER_GROUP} conditions each",
@@ -597,7 +748,12 @@ fn validate_condition(
 }
 
 fn compile_matcher(rule: &RuleDefinition) -> Result<Matcher> {
-    compile_pattern(rule.kind, &rule.pattern, rule.case_insensitive)
+    compile_pattern(
+        rule.kind,
+        &rule.pattern,
+        rule.case_insensitive,
+        rule.encoding,
+    )
 }
 
 fn compile_condition(condition: &RuleCondition) -> Result<Matcher> {
@@ -605,17 +761,26 @@ fn compile_condition(condition: &RuleCondition) -> Result<Matcher> {
         condition.kind,
         &condition.pattern,
         condition.case_insensitive,
+        condition.encoding,
     )
 }
 
-fn compile_pattern(kind: RuleKind, source: &str, case_insensitive: bool) -> Result<Matcher> {
+fn compile_pattern(
+    kind: RuleKind,
+    source: &str,
+    case_insensitive: bool,
+    encoding: TextEncoding,
+) -> Result<Matcher> {
+    if encoding != TextEncoding::Ascii && kind == RuleKind::Hex {
+        bail!("encoding = \"{encoding}\" does not apply to hex patterns");
+    }
     if kind == RuleKind::Hex {
         return Ok(Matcher::Hex(parse_hex_pattern(source)?));
     }
     let pattern = if kind == RuleKind::Literal {
-        regex::escape(source)
+        literal_pattern(source, encoding)
     } else {
-        source.to_owned()
+        regex_pattern(source, encoding)?
     };
     let regex = RegexBuilder::new(&pattern)
         .case_insensitive(case_insensitive)
@@ -660,6 +825,18 @@ fn scan_rule(
     if !rule.definition.file_types.is_empty() && !rule.definition.file_types.contains(&file_type) {
         return None;
     }
+    let size = input.len() as u64;
+    if rule
+        .definition
+        .min_size
+        .is_some_and(|minimum| size < minimum)
+        || rule
+            .definition
+            .max_size
+            .is_some_and(|maximum| size > maximum)
+    {
+        return None;
+    }
     if rule
         .definition
         .min_entropy
@@ -671,11 +848,36 @@ fn scan_rule(
     {
         return None;
     }
-    let all_matched = rule
+    let window = |index: usize| {
+        rule.definition
+            .all
+            .get(index)
+            .and_then(|condition| condition.within)
+    };
+    let mut all_matched = rule
         .all
         .iter()
-        .filter(|matcher| matcher_has_match(matcher, input))
+        .enumerate()
+        .filter(|(index, matcher)| window(*index).is_none() && matcher_has_match(matcher, input))
         .count();
+    let windowed: Vec<(usize, &Matcher)> = rule
+        .all
+        .iter()
+        .enumerate()
+        .filter_map(|(index, matcher)| window(index).map(|bytes| (bytes, matcher)))
+        .collect();
+    // Every windowed condition must follow the same primary match.
+    if !windowed.is_empty()
+        && match_starts(&rule.matcher, input)
+            .into_iter()
+            .any(|anchor| {
+                windowed.iter().all(|(bytes, matcher)| {
+                    starts_between(matcher, input, anchor, anchor.saturating_add(*bytes))
+                })
+            })
+    {
+        all_matched += windowed.len();
+    }
     if all_matched != rule.all.len() {
         return None;
     }
@@ -758,6 +960,48 @@ fn collect_matches(
         }
     }
     (total_matches, samples, truncated)
+}
+
+fn hex_at(pattern: &[Option<u8>], input: &[u8], offset: usize) -> bool {
+    input
+        .get(offset..offset + pattern.len())
+        .is_some_and(|window| {
+            pattern
+                .iter()
+                .zip(window)
+                .all(|(expected, actual)| expected.is_none_or(|byte| byte == *actual))
+        })
+}
+
+/// Start offsets of the first matches, used as `within` anchors.
+fn match_starts(matcher: &Matcher, input: &[u8]) -> Vec<usize> {
+    match matcher {
+        Matcher::Regex(regex) => regex
+            .find_iter(input)
+            .take(MAX_ANCHORS)
+            .map(|found| found.start())
+            .collect(),
+        Matcher::Hex(pattern) => (0..input.len().saturating_sub(pattern.len()) + 1)
+            .filter(|offset| hex_at(pattern, input, *offset))
+            .take(MAX_ANCHORS)
+            .collect(),
+    }
+}
+
+/// True when a match starts in `first..=last`.
+fn starts_between(matcher: &Matcher, input: &[u8], first: usize, last: usize) -> bool {
+    if first > input.len() {
+        return false;
+    }
+    match matcher {
+        // The leftmost match from `first` has the smallest start at or after it.
+        Matcher::Regex(regex) => regex
+            .find_at(input, first)
+            .is_some_and(|found| found.start() <= last),
+        Matcher::Hex(pattern) => {
+            (first..=last.min(input.len())).any(|offset| hex_at(pattern, input, offset))
+        }
+    }
 }
 
 fn matcher_has_match(matcher: &Matcher, input: &[u8]) -> bool {

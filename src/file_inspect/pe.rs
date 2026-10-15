@@ -60,6 +60,9 @@ pub(super) fn inspect_pe(bytes: &[u8]) -> Result<Option<ExecutableReport>> {
         imphash: None,
         rich_header: None,
         tls_callbacks: None,
+        universal_architectures: Vec::new(),
+        dotnet: None,
+        authenticode: None,
     };
     report.rich_header = super::pe_extra::rich_header(bytes, pe_offset);
     enrich_pe(bytes, pe_offset, optional, bits, sections, &mut report);
@@ -210,6 +213,28 @@ fn enrich_pe(
         );
     }
 
+    if let Some((cli_rva, cli_size)) = directory(14)
+        && cli_rva != 0
+        && cli_size != 0
+    {
+        match pe_rva_to_offset(cli_rva, &section_maps, size_of_headers) {
+            Some(cli_offset) => {
+                if let Some((dotnet, findings)) = super::dotnet::inspect(
+                    bytes,
+                    cli_offset,
+                    |rva| pe_rva_to_offset(rva, &section_maps, size_of_headers),
+                    &mut report.parse_warnings,
+                ) {
+                    report.suspicious_properties.extend(findings);
+                    report.dotnet = Some(dotnet);
+                }
+            }
+            None => report
+                .parse_warnings
+                .push("PE CLI header cannot be mapped to file data".to_owned()),
+        }
+    }
+
     if let Some((tls_rva, tls_size)) = directory(9)
         && tls_rva != 0
         && tls_size != 0
@@ -248,6 +273,15 @@ fn enrich_pe(
             if end <= bytes.len() as u64 {
                 report.signature_present = Some(true);
                 certificate_range = Some((start, end));
+                if let Some(details) = super::authenticode::inspect(
+                    &bytes[start as usize..end as usize],
+                    &mut report.parse_warnings,
+                ) {
+                    report
+                        .suspicious_properties
+                        .extend(super::authenticode::findings(&details));
+                    report.authenticode = Some(details);
+                }
             } else {
                 report.parse_warnings.push(
                     "PE certificate table points outside the file; signature presence is invalid"

@@ -34,7 +34,7 @@ Development guides: [installation](docs/INSTALLATION.md),
 | --- | --- | --- |
 | Understand an unknown value | `whatis`, `entropy`, `recipe` | Decoding layers and explainable signals |
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
-| Inspect local artifacts | `file inspect`, `jwt`, `cert`, `hash` | Structural metadata for archives, executables, Office, PDF and LNK files |
+| Inspect local artifacts | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Structural metadata for archives, disk images, PE/ELF/Mach-O and .NET executables, Authenticode signers, Office, RTF, PDF, LNK, email and script files, plus strings and hex views |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
@@ -67,6 +67,8 @@ are typed without the `banshee` prefix. `banshee shell` opens it directly.
 - `pwd`, `cd`, `ls`, `clear` and `exit` are console built-ins, and a leading
   `/` is optional. Everything else is the normal command line with the same
   flags and output.
+- `history` lists the session's commands, `!N` repeats one, `save <file>`
+  stores them as a script and `run <file>` replays it on another sample.
 - `open sample.bin` keeps a file open for the session; the prompt then reads
   `banshee (sample.bin)>`. Use `@` for it in any command (`report @ --format
   json`, `whatis @`), or type `report`, `file`, `cert`, `scan`, `entropy`,
@@ -144,7 +146,8 @@ target/release/banshee export case-evidence --format stix --output observables.s
 - Extract and normalize URLs, domains, IP addresses, hashes, emails, and other IOCs.
 - Track IOC source, line, column, and bounded optional context.
 - Detect common credential and private-key markers with safe default redaction.
-- Analyze entropy, common encodings, JWTs, hashes, timestamps, certificates, archives, ELF, and PE files.
+- Analyze entropy, common encodings, JWTs, hashes, timestamps, certificates, archives, and PE, ELF and Mach-O files.
+- List printable ASCII and UTF-16LE strings with offsets, like `strings`.
 - Run local TOML rules, inspect regex patterns, and watch fresh log lines.
 - Build unified text, JSON, Markdown, or script-free HTML reports for individual
   local files.
@@ -193,12 +196,32 @@ The initial foundation includes the following commands:
   for macros, remote templates, DDE fields, embedded objects, PDF actions and
   JavaScript, and hidden or script-launching shortcut arguments. Nothing is
   rendered, executed or extracted, and macro source code is not decompressed.
-- Parses PE imports, named exports, section permissions, overlay data, and
-  certificate-table presence metadata without verifying Authenticode trust.
+- Inspects RTF documents for embedded OLE objects (Equation Editor, Package,
+  OLE2Link), automatically updating objects, remote templates and DDE or
+  remote-include fields, including RTF files with a truncated `{\rt` header.
+- Inspects PowerShell, VBScript, JScript, HTA and batch files for encoded
+  commands, download-and-execute cradles, AMSI/Defender tampering, LOLBin
+  abuse, shadow-copy deletion and persistence, quoting the matching line.
+- Reads email (`.eml`) headers, authentication results, attachments (with
+  SHA-256) and links, flagging spoofed senders, risky or double-extension
+  attachments and links whose text shows another domain.
+- Lists ISO 9660 images and cabinets like archives and flags the executables,
+  shortcuts, scripts and hidden files inside; identifies 7-Zip, RAR, VHD(X)
+  and WIM files.
+- Parses PE imports, named exports, section permissions and overlay data,
+  and lists Authenticode signers, issuers, validity, digest, timestamps and
+  nested signatures without verifying trust.
+- Reads .NET metadata: assembly identity, referenced assemblies, P/Invoke
+  imports and notable framework calls, flagging obfuscator markers,
+  process-injection P/Invokes and in-memory assembly loading.
 - Computes pefile-compatible PE import hashes, decodes and validates Rich
   headers, counts TLS callbacks and reports per-section entropy.
 - Parses ELF interpreters, dynamic dependencies, RPATH/RUNPATH, section
   permissions, and stripped/debug indicators.
+- Parses Mach-O and universal binaries: segments and protections, linked
+  dylibs, `LC_RPATH`, dynamic linker, entry point and code-signature
+  presence, flagging writable and executable segments, stack execution,
+  non-PIE executables and libraries loaded from writable paths.
 - Validates and scans with bounded local TOML rules using regex, literal, or
   wildcard-hex patterns, optional metadata, file/entropy predicates, and
   compound conditions.
@@ -510,6 +533,13 @@ detected from content signatures rather than filename extensions.
 bounded whole-input predicates; the primary `pattern` supplies reported
 offsets and match counts.
 
+`encoding = "wide"` matches literal and regex patterns as UTF-16LE text, the
+way Windows stores most strings in binaries; `"both"` matches either form
+(YARA's `ascii wide`). `min_size` and `max_size` bound the input size in
+bytes. On an `[[rules.all]]` condition, `within = N` requires the match to
+start at most N bytes after a primary match, the same one for every such
+condition, like YARA's `$b in (@a[i] .. @a[i] + N)`.
+
 ```toml
 [[rules]]
 id = "pe-command-markers"
@@ -540,10 +570,14 @@ case_insensitive = true
 express exactly (for example the `text` file type) becomes a warning comment,
 and unsupported regex features skip the rule with a reason.
 `banshee rules import-yara RULES.yar` converts a subset: text, plain hex and
-regex strings (`nocase`), `$a`, `#a >= N`, `and`/`or`, `any/all of them`,
-string sets such as `any of ($x*)`, PE/ELF/ZIP/gzip magic checks and
-`math.entropy` bounds. Modifiers such as `wide`, `xor` or `fullword`, hex jumps
-and `N of them` are reported per rule instead of being approximated.
+regex strings (`nocase`, `ascii`, `wide`), `$a`, `#a >= N`, `and`/`or`,
+`any/all of them`, string sets such as `any of ($x*)`, `filesize` bounds,
+proximity loops such as `for any i in (1 .. #a) : ($b in (@a[i] .. @a[i] + N))`,
+PE/ELF/ZIP/gzip magic checks and `math.entropy` bounds. Modifiers such as
+`xor` or `fullword`, hex jumps and `N of them` are reported per rule instead of
+being approximated. All 60 rules of the AsphDex YARA library convert, and the
+converted rules give the same results as YARA on its 520 positive, negative
+and limitation fixtures and its benign corpus.
 
 `category`, `confidence` (`low`, `medium`, or `high`), `references`, and
 `attack` are reporting metadata only. `attack` accepts up to 16 unique MITRE

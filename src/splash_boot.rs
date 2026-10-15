@@ -179,7 +179,7 @@ pub(crate) fn compose(info: &SplashInfo, portrait_rows: usize, width: usize) -> 
         ),
         (
             "Inspects",
-            "PE ELF OOXML OLE PDF LNK ZIP TAR gz xz bz2".to_owned(),
+            "PE ELF Mach-O Office RTF PDF LNK archives".to_owned(),
         ),
         (
             "Decodes",
