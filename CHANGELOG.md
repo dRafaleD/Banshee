@@ -7,6 +7,12 @@ changes must be called out explicitly. Tags are immutable.
 
 ### Added
 
+- Java archive (JAR) and Android package (APK) inspection in `file inspect`,
+  `report` and `scan`: manifest fields, signing, Class-Path to remote
+  locations, embedded Windows executables, runtime class loading combined with
+  decoding, process creation combined with networking, APK permissions (SMS,
+  accessibility, overlay, device admin, package install), native ABIs and
+  `DexClassLoader` references. Bytecode is not decompiled.
 - `banshee strings` lists printable ASCII and UTF-16LE strings with their
   offsets (`--min-length`, `--encoding`, `--plain`, `--json`); `--max-strings`
   bounds the list while the total is still counted.
