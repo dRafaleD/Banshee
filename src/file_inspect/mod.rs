@@ -15,6 +15,7 @@ mod binary;
 mod document;
 mod dotnet;
 mod elf;
+mod email;
 mod macho;
 mod ordinals;
 mod pe;
@@ -296,6 +297,9 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
     } else if rtf::is_rtf(bytes) {
         report.format = "RTF document".to_owned();
         attach_document(&mut report, rtf::inspect_rtf(bytes));
+    } else if email::looks_like_email(&report.path, bytes) {
+        report.format = "Email message".to_owned();
+        attach_document(&mut report, email::inspect(bytes));
     } else if let Some(language) = script::language(&report.path)
         && let Some(document) = script::inspect(bytes, language)
     {

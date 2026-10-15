@@ -65,6 +65,37 @@ fn dotnet_metadata_of_a_framework_assembly() {
 }
 
 #[test]
+fn email_messages_list_attachments_and_mismatches() {
+    let path = temp_fixture("message.eml");
+    std::fs::write(
+        &path,
+        "From: Support <help@bank.test>\r\nReply-To: pay@collector.test\r\nSubject: Invoice\r\n\
+Date: Mon, 12 Oct 2026 10:00:00 +0000\r\nMessage-ID: <1@bank.test>\r\nMIME-Version: 1.0\r\n\
+Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\n\
+Open http://pay.collector.test/i\r\n--b\r\nContent-Type: application/x-msdownload\r\n\
+Content-Disposition: attachment; filename=\"scan.pdf.exe\"\r\nContent-Transfer-Encoding: base64\r\n\r\n\
+TVqQAA==\r\n--b--\r\n",
+    )
+    .expect("write message");
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["file", "inspect"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Format: Email message"))
+        .stdout(predicate::str::contains(
+            "scan.pdf.exe (application/x-msdownload, 4 bytes",
+        ))
+        .stdout(predicate::str::contains("double extension"))
+        .stdout(predicate::str::contains(
+            "reply-to domain (collector.test) differs",
+        ))
+        .stdout(predicate::str::contains("http://pay.collector.test/i"));
+    std::fs::remove_file(path).expect("remove message");
+}
+
+#[test]
 fn script_files_report_high_signal_behaviors() {
     let path = temp_fixture("dropper.ps1");
     std::fs::write(
