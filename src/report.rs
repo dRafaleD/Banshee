@@ -249,6 +249,8 @@ pub enum ReportFormat {
     Markdown,
     /// Self-contained, script-free HTML page.
     Html,
+    /// SARIF 2.1.0 log of the findings.
+    Sarif,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -570,6 +572,12 @@ pub fn write_to(
         }
         ReportFormat::Markdown => write_markdown(output, report),
         ReportFormat::Html => crate::report_html::write_html(output, report),
+        ReportFormat::Sarif => {
+            let log = crate::sarif::build(&[(report.file.path.as_str(), report)]);
+            serde_json::to_writer_pretty(&mut *output, &log)
+                .context("failed to serialize SARIF log")?;
+            writeln!(output).context("failed to write SARIF log")
+        }
     }
 }
 
