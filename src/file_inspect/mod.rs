@@ -12,6 +12,7 @@ use xz2::read::XzDecoder;
 mod archive;
 mod authenticode;
 mod binary;
+mod container;
 mod document;
 mod dotnet;
 mod elf;
@@ -271,6 +272,20 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
             max_entries,
             &mut report,
         )?;
+    } else if container::is_iso(bytes) {
+        report.format = "ISO 9660 disk image".to_owned();
+        report.archive = Some(container::inspect_iso(
+            bytes,
+            max_entries,
+            &mut report.findings,
+        ));
+    } else if container::is_cab(bytes) {
+        report.format = "Microsoft cabinet (CAB)".to_owned();
+        report.archive = Some(container::inspect_cab(
+            bytes,
+            max_entries,
+            &mut report.findings,
+        ));
     } else if let Some(executable) = inspect_elf(bytes)? {
         report.format = "ELF executable".to_owned();
         attach_executable(&mut report, executable);
@@ -297,6 +312,8 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
     } else if rtf::is_rtf(bytes) {
         report.format = "RTF document".to_owned();
         attach_document(&mut report, rtf::inspect_rtf(bytes));
+    } else if let Some(format) = container::identify_only(bytes) {
+        report.format = format.to_owned();
     } else if email::looks_like_email(&report.path, bytes) {
         report.format = "Email message".to_owned();
         attach_document(&mut report, email::inspect(bytes));
