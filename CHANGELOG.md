@@ -5,6 +5,13 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+### Fixed
+
+- `jwt verify` refuses tokens whose `exp` or `nbf` claim is not a non-negative
+  integer when time validation is on. jsonwebtoken before 10.3.0 skips that
+  check for such claims (CVE-2026-25537), so a string `nbf` could pass as
+  time-validated.
+
 ## 0.3.0 — 2026-10-16
 
 ### Added
