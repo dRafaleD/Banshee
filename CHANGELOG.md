@@ -5,6 +5,8 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+## 0.3.0 — 2026-10-16
+
 ### Added
 
 - Java archive (JAR) and Android package (APK) inspection in `file inspect`,
