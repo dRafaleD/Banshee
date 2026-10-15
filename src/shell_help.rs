@@ -40,7 +40,7 @@ const CATEGORIES: &[Category] = &[
         key_tr: "dosyalar",
         title: "FILES & REPORTS",
         title_tr: "DOSYALAR VE RAPORLAR",
-        commands: &["file", "strings", "report", "scan", "rules"],
+        commands: &["file", "strings", "hexdump", "report", "scan", "rules"],
         examples: &[
             "file inspect suspicious.zip",
             "report suspicious.exe",
@@ -175,6 +175,7 @@ fn describe_turkish(name: &str) -> &'static str {
         "watch" => "Eklenen log satırlarını izle ve yerelde analiz et",
         "file" => "Arşivleri, sıkıştırılmış akışları ve yürütülebilir başlıkları çevrimdışı incele",
         "strings" => "Okunabilir ASCII ve UTF-16LE dizgeleri ofsetleriyle çıkar",
+        "hexdump" => "Girdinin bir bölümünü onaltılık döküm (ofset, bayt, ASCII) olarak göster",
         "report" => "Tek bir yerel dosya için birleşik çevrimdışı analiz raporu oluştur",
         "scan" => "Yerel dosya veya dizini sınırlı çevrimdışı analizle tara",
         "rules" => "Yerel TOML tespit kurallarını doğrula ve kurallarla tara",

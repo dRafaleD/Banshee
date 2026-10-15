@@ -40,6 +40,62 @@ pub struct FoundString {
     /// True when the run was longer than the kept value.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub value_truncated: bool,
+    /// What the string looks like (url, ipv4, path, ...), when notable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<&'static str>,
+}
+
+/// Classifies a string as an analyst would skim `strings` output. The first
+/// matching category wins; `None` means nothing stands out.
+pub fn category(value: &str) -> Option<&'static str> {
+    use std::sync::OnceLock;
+
+    use regex::Regex;
+
+    static PATTERNS: OnceLock<Vec<(&'static str, Regex)>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        [
+            ("url", r"(?i)\b(?:https?|ftp)://[^\s]{3,}"),
+            (
+                "email",
+                r"(?i)\b[a-z0-9._%+-]{1,64}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})*\.[a-z]{2,24}\b",
+            ),
+            (
+                "ipv4",
+                r"\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b",
+            ),
+            (
+                "registry",
+                r"(?i)\bHKEY_[A-Z_]+|\bHK(?:LM|CU|CR|U)\\|software\\microsoft\\windows\\currentversion",
+            ),
+            (
+                "path",
+                r"(?i)\b[a-z]:\\[^\s]|%(?:appdata|localappdata|temp|tmp|programdata|userprofile|windir|systemroot)%|\\\\[a-z0-9.-]+\\",
+            ),
+            (
+                "command",
+                r"(?i)\b(?:cmd\.exe|powershell|pwsh|rundll32|regsvr32|mshta|wscript|cscript|schtasks|bitsadmin|certutil|vssadmin|wmic|bcdedit|netsh)\b",
+            ),
+            ("user-agent", r"(?i)\bmozilla/\d"),
+            ("base64", r"^[A-Za-z0-9+/]{40,}={0,2}$"),
+        ]
+        .into_iter()
+        .map(|(name, pattern)| (name, Regex::new(pattern).expect("valid category pattern")))
+        .collect()
+    });
+    if let Some((name, _)) = patterns.iter().find(|(_, pattern)| pattern.is_match(value)) {
+        return Some(name);
+    }
+    // Domains: dotted labels ending in a known IANA top-level domain.
+    static DOMAIN: OnceLock<Regex> = OnceLock::new();
+    let domain = DOMAIN.get_or_init(|| {
+        Regex::new(r"(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b")
+            .expect("valid domain pattern")
+    });
+    domain
+        .find_iter(value)
+        .any(|found| crate::tld::has_known_tld(found.as_str()))
+        .then_some("domain")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +114,8 @@ pub struct StringsOptions {
     pub min_length: usize,
     pub encoding: EncodingChoice,
     pub max_strings: usize,
+    /// Keep only strings with a category.
+    pub interesting: bool,
 }
 
 fn printable(byte: u8) -> bool {
@@ -133,17 +191,24 @@ pub fn extract(bytes: &[u8], options: StringsOptions) -> StringsReport {
     // A UTF-16 string is also a run of one-character ASCII strings; those are
     // shorter than any useful minimum, so no extra de-duplication is needed.
     found.sort_by_key(|(offset, _, encoding, _)| (*offset, *encoding as u8));
-    let total = found.len();
-    let strings = found
-        .into_iter()
-        .take(options.max_strings)
-        .map(|(offset, length, encoding, value)| FoundString {
-            offset,
-            encoding,
-            value_truncated: length > value.len(),
-            value,
-        })
-        .collect();
+    let mut total = 0;
+    let mut strings = Vec::new();
+    for (offset, length, encoding, value) in found {
+        let category = category(&value);
+        if options.interesting && category.is_none() {
+            continue;
+        }
+        total += 1;
+        if strings.len() < options.max_strings {
+            strings.push(FoundString {
+                offset,
+                encoding,
+                value_truncated: length > value.len(),
+                value,
+                category,
+            });
+        }
+    }
     StringsReport {
         input_bytes: bytes.len(),
         min_length,
@@ -162,6 +227,7 @@ mod tests {
             min_length,
             encoding,
             max_strings: 100,
+            interesting: false,
         }
     }
 
@@ -231,6 +297,7 @@ mod tests {
                 min_length: 4,
                 encoding: EncodingChoice::Ascii,
                 max_strings: 3,
+                interesting: false,
             },
         );
         assert_eq!(report.strings.len(), 3);
@@ -253,5 +320,56 @@ mod tests {
             extract(b"ab", options(0, EncodingChoice::Ascii)).min_length,
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod category_tests {
+    use super::{EncodingChoice, StringsOptions, category, extract};
+
+    #[test]
+    fn classifies_common_indicators() {
+        for (value, expected) in [
+            ("http://203.0.113.9/gate.php", Some("url")),
+            ("admin@example.test", Some("email")),
+            ("connect 198.51.100.23 now", Some("ipv4")),
+            (
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
+                Some("registry"),
+            ),
+            (r"HKLM\SYSTEM", Some("registry")),
+            (r"C:\Users\Public\a.exe", Some("path")),
+            (r"%APPDATA%\svc.exe", Some("path")),
+            ("cmd.exe /c whoami", Some("command")),
+            ("Mozilla/5.0 (Windows NT 10.0)", Some("user-agent")),
+            ("update.microsoft.com", Some("domain")),
+            (
+                "TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAA",
+                Some("base64"),
+            ),
+            ("GetProcAddress", None),
+            ("s@I9.t", None),
+            ("System.Net.WebClient", None),
+            ("999.1.1.1", None),
+        ] {
+            assert_eq!(category(value), expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn interesting_keeps_only_categorized_strings() {
+        let data = b"\x00GetProcAddress\x00http://x.example.test/a\x00LoadLibraryA\x00";
+        let report = extract(
+            data,
+            StringsOptions {
+                min_length: 4,
+                encoding: EncodingChoice::All,
+                max_strings: 100,
+                interesting: true,
+            },
+        );
+        assert_eq!(report.total, 1);
+        assert_eq!(report.strings[0].value, "http://x.example.test/a");
+        assert_eq!(report.strings[0].category, Some("url"));
     }
 }

@@ -170,6 +170,8 @@ pub enum Command {
     File(FileArgs),
     /// Extract printable ASCII and UTF-16LE strings with their offsets
     Strings(StringsArgs),
+    /// Show a canonical hex dump (offset, hex bytes, ASCII) of part of the input
+    Hexdump(HexdumpArgs),
     /// Validate and scan with local TOML detection rules
     Rules(RulesArgs),
     /// Automatically analyze tokens and IOCs in bulk input
@@ -559,6 +561,36 @@ pub struct CertChainArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct HexdumpArgs {
+    #[command(flatten)]
+    pub source: SourceArgs,
+
+    /// First byte to show (decimal, or hex with 0x)
+    #[arg(long, default_value = "0", value_parser = parse_offset)]
+    pub offset: usize,
+
+    /// Number of bytes to show
+    #[arg(short = 'n', long, default_value_t = 512, value_parser = clap::value_parser!(u32).range(1..=16_777_216))]
+    pub length: u32,
+
+    /// Bytes per line
+    #[arg(long, default_value_t = 16, value_parser = clap::value_parser!(u8).range(1..=64))]
+    pub width: u8,
+}
+
+/// Parses `1234` or `0x4d2`.
+fn parse_offset(value: &str) -> Result<usize, String> {
+    let parsed = match value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        Some(hex) => usize::from_str_radix(hex, 16),
+        None => value.parse::<usize>(),
+    };
+    parsed.map_err(|_| format!("'{value}' is not a decimal or 0x-prefixed hex offset"))
+}
+
+#[derive(Debug, Args)]
 pub struct StringsArgs {
     #[command(flatten)]
     pub source: SourceArgs,
@@ -578,6 +610,10 @@ pub struct StringsArgs {
     /// Print only the strings, one per line, without offsets
     #[arg(long, conflicts_with = "json")]
     pub plain: bool,
+
+    /// Keep only notable strings (URLs, IPs, domains, paths, registry keys, commands, ...)
+    #[arg(long)]
+    pub interesting: bool,
 
     /// Emit machine-readable JSON
     #[arg(long)]

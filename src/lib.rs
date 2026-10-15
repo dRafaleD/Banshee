@@ -11,6 +11,7 @@ pub mod export;
 pub mod file_inspect;
 pub mod fuzzy;
 pub mod hash;
+pub mod hexdump;
 mod i18n;
 pub mod input;
 pub mod ioc;
@@ -116,6 +117,18 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             let report = analysis::entropy::analyze_bytes(&value);
             output::print_entropy_report(&report, args.json)?;
         }
+        Command::Hexdump(args) => {
+            let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
+            output::write_raw(
+                hexdump::render(
+                    &value,
+                    args.offset,
+                    args.length as usize,
+                    usize::from(args.width),
+                )
+                .as_bytes(),
+            )?;
+        }
         Command::Strings(args) => {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
             let report = strings::extract(
@@ -124,6 +137,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     min_length: usize::from(args.min_length),
                     encoding: args.encoding,
                     max_strings: args.max_strings as usize,
+                    interesting: args.interesting,
                 },
             );
             output::print_json_or(&report, args.json, |output| {
@@ -131,6 +145,14 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     let value = output::terminal_safe(&found.value);
                     if args.plain {
                         writeln!(output, "{value}")?;
+                    } else if args.interesting {
+                        writeln!(
+                            output,
+                            "{:#010x}  {:<7}  {:<10}  {value}",
+                            found.offset,
+                            found.encoding.to_string(),
+                            found.category.unwrap_or("")
+                        )?;
                     } else {
                         writeln!(
                             output,

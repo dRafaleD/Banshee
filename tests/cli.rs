@@ -117,6 +117,17 @@ fn script_files_report_high_signal_behaviors() {
 }
 
 #[test]
+fn hexdump_shows_a_bounded_window() {
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["hexdump", "--offset", "0x2", "-n", "5", "--width", "8"])
+        .arg("ABCDEFGHIJ")
+        .assert()
+        .success()
+        .stdout("00000002  43 44 45 46  47           |CDEFG|\n00000007\n");
+}
+
+#[test]
 fn strings_lists_ascii_and_utf16_with_offsets() {
     let path = temp_fixture("strings.bin");
     let mut data = b"\x00\x01http://evil.example.test/a\x00\xff".to_vec();
