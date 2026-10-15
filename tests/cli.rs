@@ -1491,3 +1491,54 @@ fn certificate_chain_fixture() -> (rcgen::Certificate, CertifiedIssuer<'static, 
 
     (leaf, root)
 }
+
+#[test]
+fn report_and_scan_emit_sarif_logs() {
+    let directory = temp_fixture("sarif-dir");
+    std::fs::create_dir_all(&directory).expect("create directory");
+    let sample = directory.join("sample.txt");
+    std::fs::write(
+        &sample,
+        b"PowerShell.exe -enc AAAA http://sarif.example.test/x\n",
+    )
+    .expect("write sample");
+
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .arg("report")
+        .arg(&sample)
+        .args(["--format", "sarif"])
+        .output()
+        .expect("run report");
+    assert!(output.status.success());
+    let log: serde_json::Value = serde_json::from_slice(&output.stdout).expect("SARIF JSON");
+    assert_eq!(log["version"], "2.1.0");
+    let results = log["runs"][0]["results"].as_array().expect("results");
+    assert!(!results.is_empty());
+    assert!(
+        results[0]["ruleId"]
+            .as_str()
+            .expect("rule")
+            .starts_with("banshee/")
+    );
+    assert!(results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].is_string());
+
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .arg("scan")
+        .arg(&directory)
+        .args(["--format", "sarif"])
+        .output()
+        .expect("run scan");
+    assert!(output.status.success());
+    let log: serde_json::Value = serde_json::from_slice(&output.stdout).expect("SARIF JSON");
+    assert_eq!(log["runs"][0]["tool"]["driver"]["name"], "Banshee");
+    assert!(
+        !log["runs"][0]["results"]
+            .as_array()
+            .expect("results")
+            .is_empty()
+    );
+
+    std::fs::remove_dir_all(directory).expect("remove fixture");
+}

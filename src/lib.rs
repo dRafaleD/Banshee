@@ -22,6 +22,7 @@ pub mod regex_tool;
 pub mod report;
 mod report_html;
 pub mod rules;
+pub mod sarif;
 pub mod scan;
 mod shell;
 #[cfg(feature = "line-editor")]

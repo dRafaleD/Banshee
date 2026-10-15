@@ -19,6 +19,8 @@ pub enum ScanFormat {
     Text,
     Json,
     Jsonl,
+    /// SARIF 2.1.0 log of all findings.
+    Sarif,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -637,6 +639,17 @@ pub fn print(report: &DirectoryScanReport, format: ScanFormat) -> Result<()> {
             writeln!(output).context("failed to write directory scan")
         }
         ScanFormat::Jsonl => write_jsonl(output, report),
+        ScanFormat::Sarif => {
+            let pairs: Vec<(&str, &UnifiedReport)> = report
+                .results
+                .iter()
+                .filter_map(|item| Some((item.path.as_str(), item.report.as_ref()?)))
+                .collect();
+            let log = crate::sarif::build(&pairs);
+            serde_json::to_writer_pretty(&mut *output, &log)
+                .context("failed to serialize SARIF log")?;
+            writeln!(output).context("failed to write SARIF log")
+        }
     })
 }
 

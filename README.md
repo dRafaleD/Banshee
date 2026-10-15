@@ -380,6 +380,11 @@ banshee report suspicious.bin --rules examples/rules.toml --format markdown --ou
 banshee scan ./samples
 banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
+
+# SARIF 2.1.0 for code-scanning tools such as GitHub code scanning. Rule IDs
+# name the finding source and kind; levels follow the finding severity.
+banshee report suspicious.bin --format sarif --output report.sarif
+banshee scan ./samples --recursive --format sarif --output scan.sarif
 ```
 
 ### Help and CLI discovery
