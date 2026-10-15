@@ -14,6 +14,10 @@ changes must be called out explicitly. Tags are immutable.
 - `banshee strings` lists printable ASCII and UTF-16LE strings with their
   offsets (`--min-length`, `--encoding`, `--plain`, `--json`); `--max-strings`
   bounds the list while the total is still counted.
+- ELF inspection flags executable stacks, non-PIE dynamic executables, entry
+  points outside executable segments, non-standard interpreters, RPATH,
+  RUNPATH and needed libraries in temporary or relative paths, UPX markers
+  and files without section headers. `$ORIGIN` search paths are not reported.
 - Mach-O inspection in `file inspect`, `report`, `scan` and evidence bundles:
   CPU, file type, segments with protections and entropy, linked dylibs,
   `LC_RPATH`, dynamic linker, entry point and code-signature presence.

@@ -791,8 +791,45 @@ mod tests {
         assert_eq!(executable.stripped, Some(true));
         assert_eq!(executable.debug_info_present, Some(true));
         assert_eq!(executable.section_details.len(), 5);
-        assert!(executable.suspicious_properties.is_empty());
+        assert_eq!(
+            executable.suspicious_properties,
+            ["ELF RPATH contains a writable or relative search path '/tmp/lib'"]
+        );
         assert!(executable.parse_warnings.is_empty());
+    }
+
+    #[test]
+    fn flags_elf_hardening_gaps_and_tampering_signs() {
+        let mut bytes = elf64_fixture();
+        // PT_GNU_STACK with the execute flag, a stray entry point and a
+        // planted interpreter, in the otherwise clean fixture.
+        put_u16(&mut bytes, 56, 4);
+        put_u32(&mut bytes, 0xe8, 0x6474_e551);
+        put_u32(&mut bytes, 0xec, 7);
+        put_u64(&mut bytes, 24, 0x900000);
+        bytes[0x180..0x19c].copy_from_slice(b"/tmp/x/ld-linux-x86-64.so.2\0");
+        bytes[0x590..0x594].copy_from_slice(b"UPX!");
+        let report = inspect_bytes(&bytes, "tampered.elf".to_owned(), 100).expect("inspect ELF");
+        let findings = report.executable.expect("executable").suspicious_properties;
+        for expected in [
+            "executable stack",
+            "entry point is outside every executable segment",
+            "non-standard interpreter",
+            "UPX packer markers",
+        ] {
+            assert!(
+                findings.iter().any(|finding| finding.contains(expected)),
+                "missing {expected}: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_flag_origin_relative_search_paths() {
+        assert!(!super::elf::is_risky_search_path("$ORIGIN/../lib"));
+        assert!(super::elf::is_risky_search_path("/dev/shm/x"));
+        assert!(super::elf::is_risky_search_path(""));
+        assert!(!super::elf::is_risky_search_path("/usr/lib"));
     }
 
     #[test]
