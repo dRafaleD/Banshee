@@ -518,6 +518,13 @@ detected from content signatures rather than filename extensions.
 bounded whole-input predicates; the primary `pattern` supplies reported
 offsets and match counts.
 
+`encoding = "wide"` matches literal and regex patterns as UTF-16LE text, the
+way Windows stores most strings in binaries; `"both"` matches either form
+(YARA's `ascii wide`). `min_size` and `max_size` bound the input size in
+bytes. On an `[[rules.all]]` condition, `within = N` requires the match to
+start at most N bytes after a primary match, the same one for every such
+condition, like YARA's `$b in (@a[i] .. @a[i] + N)`.
+
 ```toml
 [[rules]]
 id = "pe-command-markers"
@@ -548,10 +555,14 @@ case_insensitive = true
 express exactly (for example the `text` file type) becomes a warning comment,
 and unsupported regex features skip the rule with a reason.
 `banshee rules import-yara RULES.yar` converts a subset: text, plain hex and
-regex strings (`nocase`), `$a`, `#a >= N`, `and`/`or`, `any/all of them`,
-string sets such as `any of ($x*)`, PE/ELF/ZIP/gzip magic checks and
-`math.entropy` bounds. Modifiers such as `wide`, `xor` or `fullword`, hex jumps
-and `N of them` are reported per rule instead of being approximated.
+regex strings (`nocase`, `ascii`, `wide`), `$a`, `#a >= N`, `and`/`or`,
+`any/all of them`, string sets such as `any of ($x*)`, `filesize` bounds,
+proximity loops such as `for any i in (1 .. #a) : ($b in (@a[i] .. @a[i] + N))`,
+PE/ELF/ZIP/gzip magic checks and `math.entropy` bounds. Modifiers such as
+`xor` or `fullword`, hex jumps and `N of them` are reported per rule instead of
+being approximated. All 60 rules of the AsphDex YARA library convert, and the
+converted rules give the same results as YARA on its 520 positive, negative
+and limitation fixtures and its benign corpus.
 
 `category`, `confidence` (`low`, `medium`, or `high`), `references`, and
 `attack` are reporting metadata only. `attack` accepts up to 16 unique MITRE

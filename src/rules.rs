@@ -20,6 +20,9 @@ const MAX_REFERENCE_BYTES: usize = 512;
 const MAX_TAGS_PER_RULE: usize = 32;
 const MAX_ATTACK_IDS_PER_RULE: usize = 16;
 const MAX_METADATA_BYTES: usize = 4_096;
+/// Largest `within` distance and primary matches tried as anchors.
+const MAX_WITHIN_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ANCHORS: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,6 +79,74 @@ pub(crate) fn literal_pattern(text: &str, encoding: TextEncoding) -> String {
         TextEncoding::Wide => wide(),
         TextEncoding::Both => format!("(?:{ascii})|{}", wide()),
     }
+}
+
+/// Rewrites a regex for UTF-16LE text, as YARA's `wide` does: every byte it
+/// matches must be followed by a zero byte. Classes keep only their ASCII part.
+pub(crate) fn wide_regex(source: &str) -> Result<String> {
+    use regex_syntax::hir::{
+        Capture, Class, ClassBytes, ClassBytesRange, Hir, HirKind, Repetition,
+    };
+
+    fn widen(hir: &Hir) -> Hir {
+        match hir.kind() {
+            HirKind::Empty => Hir::empty(),
+            HirKind::Literal(literal) => Hir::literal(
+                literal
+                    .0
+                    .iter()
+                    .flat_map(|byte| [*byte, 0])
+                    .collect::<Vec<u8>>(),
+            ),
+            HirKind::Class(class) => {
+                let bytes = match class {
+                    Class::Bytes(bytes) => bytes.clone(),
+                    Class::Unicode(unicode) => {
+                        ClassBytes::new(unicode.iter().filter(|range| range.start() <= '\x7f').map(
+                            |range| {
+                                ClassBytesRange::new(
+                                    range.start() as u8,
+                                    range.end().min('\x7f') as u8,
+                                )
+                            },
+                        ))
+                    }
+                };
+                Hir::concat(vec![Hir::class(Class::Bytes(bytes)), Hir::literal([0u8])])
+            }
+            HirKind::Look(look) => Hir::look(*look),
+            HirKind::Repetition(repetition) => Hir::repetition(Repetition {
+                min: repetition.min,
+                max: repetition.max,
+                greedy: repetition.greedy,
+                sub: Box::new(widen(&repetition.sub)),
+            }),
+            HirKind::Capture(capture) => Hir::capture(Capture {
+                index: capture.index,
+                name: capture.name.clone(),
+                sub: Box::new(widen(&capture.sub)),
+            }),
+            HirKind::Concat(parts) => Hir::concat(parts.iter().map(widen).collect()),
+            HirKind::Alternation(parts) => Hir::alternation(parts.iter().map(widen).collect()),
+        }
+    }
+
+    let hir = regex_syntax::ParserBuilder::new()
+        .unicode(false)
+        .utf8(false)
+        .build()
+        .parse(source)
+        .context("regex cannot be converted to its wide form")?;
+    Ok(widen(&hir).to_string())
+}
+
+/// Regex source for a pattern in the given encoding.
+pub(crate) fn regex_pattern(source: &str, encoding: TextEncoding) -> Result<String> {
+    Ok(match encoding {
+        TextEncoding::Ascii => source.to_owned(),
+        TextEncoding::Wide => wide_regex(source)?,
+        TextEncoding::Both => format!("(?:{source})|(?:{})", wide_regex(source)?),
+    })
 }
 
 impl std::fmt::Display for RuleKind {
@@ -223,6 +294,11 @@ struct RuleCondition {
     case_insensitive: bool,
     #[serde(default)]
     encoding: TextEncoding,
+    /// For `all` conditions: the match must start within this many bytes
+    /// after the start of one primary match, the same one for every such
+    /// condition (YARA's `$b in (@a[i]..@a[i] + N)`).
+    #[serde(default)]
+    within: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -581,6 +657,19 @@ fn validate_definition(rule: &RuleDefinition, ids: &mut HashSet<String>) -> Resu
     {
         bail!("rule '{}' min_size cannot exceed max_size", rule.id);
     }
+    if rule.any.iter().any(|condition| condition.within.is_some()) {
+        bail!("rule '{}' any conditions cannot use within", rule.id);
+    }
+    if rule.all.iter().any(|condition| {
+        condition
+            .within
+            .is_some_and(|bytes| bytes > MAX_WITHIN_BYTES)
+    }) {
+        bail!(
+            "rule '{}' within cannot exceed {MAX_WITHIN_BYTES} bytes",
+            rule.id
+        );
+    }
     if rule.all.len() > MAX_CONDITIONS_PER_GROUP || rule.any.len() > MAX_CONDITIONS_PER_GROUP {
         bail!(
             "rule '{}' all/any groups are limited to {MAX_CONDITIONS_PER_GROUP} conditions each",
@@ -682,8 +771,8 @@ fn compile_pattern(
     case_insensitive: bool,
     encoding: TextEncoding,
 ) -> Result<Matcher> {
-    if encoding != TextEncoding::Ascii && kind != RuleKind::Literal {
-        bail!("encoding = \"{encoding}\" applies only to literal patterns");
+    if encoding != TextEncoding::Ascii && kind == RuleKind::Hex {
+        bail!("encoding = \"{encoding}\" does not apply to hex patterns");
     }
     if kind == RuleKind::Hex {
         return Ok(Matcher::Hex(parse_hex_pattern(source)?));
@@ -691,7 +780,7 @@ fn compile_pattern(
     let pattern = if kind == RuleKind::Literal {
         literal_pattern(source, encoding)
     } else {
-        source.to_owned()
+        regex_pattern(source, encoding)?
     };
     let regex = RegexBuilder::new(&pattern)
         .case_insensitive(case_insensitive)
@@ -759,11 +848,36 @@ fn scan_rule(
     {
         return None;
     }
-    let all_matched = rule
+    let window = |index: usize| {
+        rule.definition
+            .all
+            .get(index)
+            .and_then(|condition| condition.within)
+    };
+    let mut all_matched = rule
         .all
         .iter()
-        .filter(|matcher| matcher_has_match(matcher, input))
+        .enumerate()
+        .filter(|(index, matcher)| window(*index).is_none() && matcher_has_match(matcher, input))
         .count();
+    let windowed: Vec<(usize, &Matcher)> = rule
+        .all
+        .iter()
+        .enumerate()
+        .filter_map(|(index, matcher)| window(index).map(|bytes| (bytes, matcher)))
+        .collect();
+    // Every windowed condition must follow the same primary match.
+    if !windowed.is_empty()
+        && match_starts(&rule.matcher, input)
+            .into_iter()
+            .any(|anchor| {
+                windowed.iter().all(|(bytes, matcher)| {
+                    starts_between(matcher, input, anchor, anchor.saturating_add(*bytes))
+                })
+            })
+    {
+        all_matched += windowed.len();
+    }
     if all_matched != rule.all.len() {
         return None;
     }
@@ -846,6 +960,48 @@ fn collect_matches(
         }
     }
     (total_matches, samples, truncated)
+}
+
+fn hex_at(pattern: &[Option<u8>], input: &[u8], offset: usize) -> bool {
+    input
+        .get(offset..offset + pattern.len())
+        .is_some_and(|window| {
+            pattern
+                .iter()
+                .zip(window)
+                .all(|(expected, actual)| expected.is_none_or(|byte| byte == *actual))
+        })
+}
+
+/// Start offsets of the first matches, used as `within` anchors.
+fn match_starts(matcher: &Matcher, input: &[u8]) -> Vec<usize> {
+    match matcher {
+        Matcher::Regex(regex) => regex
+            .find_iter(input)
+            .take(MAX_ANCHORS)
+            .map(|found| found.start())
+            .collect(),
+        Matcher::Hex(pattern) => (0..input.len().saturating_sub(pattern.len()) + 1)
+            .filter(|offset| hex_at(pattern, input, *offset))
+            .take(MAX_ANCHORS)
+            .collect(),
+    }
+}
+
+/// True when a match starts in `first..=last`.
+fn starts_between(matcher: &Matcher, input: &[u8], first: usize, last: usize) -> bool {
+    if first > input.len() {
+        return false;
+    }
+    match matcher {
+        // The leftmost match from `first` has the smallest start at or after it.
+        Matcher::Regex(regex) => regex
+            .find_at(input, first)
+            .is_some_and(|found| found.start() <= last),
+        Matcher::Hex(pattern) => {
+            (first..=last.min(input.len())).any(|offset| hex_at(pattern, input, offset))
+        }
+    }
 }
 
 fn matcher_has_match(matcher: &Matcher, input: &[u8]) -> bool {

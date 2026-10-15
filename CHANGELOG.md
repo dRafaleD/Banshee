@@ -22,6 +22,19 @@ changes must be called out explicitly. Tags are immutable.
   automatically updating objects, remote templates, DDE fields and
   `INCLUDEPICTURE`/`INCLUDETEXT` fields that fetch remote or UNC content.
 
+- Local rules: `encoding = "wide" | "both"` matches literal and regex
+  patterns as UTF-16LE text, `min_size`/`max_size` bound the input size, and
+  `within = N` on an `all` condition requires it to follow one primary match
+  within N bytes. YARA import maps `ascii`/`wide` modifiers, `filesize`
+  comparisons and `for any i in (1..#a) : ($b in (@a[i]..@a[i]+N))` proximity
+  loops to them, and export writes them back. All 60 AsphDex YARA library
+  rules now convert and match its fixtures as YARA does.
+
+### Fixed
+
+- YARA import no longer misreads rule boundaries when a regex string contains
+  `{` or `}`.
+
 ### Changed
 
 - Executable signature, linker and dependency labels follow the format (for
