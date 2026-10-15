@@ -371,6 +371,13 @@ fn write_executable(
     if let Some(callbacks) = executable.tls_callbacks {
         row(output, "TLS callbacks", &callbacks.to_string())?;
     }
+    let mut managed = Vec::new();
+    crate::output::write_managed_and_signature(&mut managed, executable, "")?;
+    for line in String::from_utf8_lossy(&managed).lines() {
+        if let Some((label, value)) = line.split_once(": ") {
+            row(output, label, &escape(value))?;
+        }
+    }
     if let Some(subsystem) = &executable.subsystem {
         row(output, "Subsystem", &escape(subsystem))?;
     }

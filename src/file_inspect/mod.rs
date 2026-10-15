@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use xz2::read::XzDecoder;
 
 mod archive;
+mod authenticode;
 mod binary;
 mod document;
 mod dotnet;
@@ -21,6 +22,7 @@ mod pe_extra;
 mod rtf;
 
 use archive::{inspect_tar, inspect_zip, is_tar, is_zip};
+pub use authenticode::{AuthenticodeReport, CertificateSummary, NestedSigner};
 pub use document::{DocumentProperty, DocumentReport, ExternalTarget};
 pub use dotnet::DotNetReport;
 use elf::inspect_elf;
@@ -118,6 +120,9 @@ pub struct ExecutableReport {
     /// CLI metadata of a managed (.NET) PE file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dotnet: Option<DotNetReport>,
+    /// Authenticode certificate details (not verified).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authenticode: Option<AuthenticodeReport>,
 }
 
 impl ExecutableReport {
@@ -672,7 +677,17 @@ mod tests {
                 .is_some_and(|overlay| overlay.includes_certificate_table)
         );
         assert!(executable.suspicious_properties.is_empty());
-        assert!(executable.parse_warnings.is_empty());
+        // The fixture's certificate table is filler, so only the Authenticode
+        // reader may complain about it.
+        assert!(
+            executable
+                .parse_warnings
+                .iter()
+                .all(|warning| warning.contains("PKCS#7")),
+            "{:?}",
+            executable.parse_warnings
+        );
+        assert!(executable.authenticode.is_none());
     }
 
     #[test]

@@ -62,6 +62,7 @@ pub(super) fn inspect_pe(bytes: &[u8]) -> Result<Option<ExecutableReport>> {
         tls_callbacks: None,
         universal_architectures: Vec::new(),
         dotnet: None,
+        authenticode: None,
     };
     report.rich_header = super::pe_extra::rich_header(bytes, pe_offset);
     enrich_pe(bytes, pe_offset, optional, bits, sections, &mut report);
@@ -272,6 +273,15 @@ fn enrich_pe(
             if end <= bytes.len() as u64 {
                 report.signature_present = Some(true);
                 certificate_range = Some((start, end));
+                if let Some(details) = super::authenticode::inspect(
+                    &bytes[start as usize..end as usize],
+                    &mut report.parse_warnings,
+                ) {
+                    report
+                        .suspicious_properties
+                        .extend(super::authenticode::findings(&details));
+                    report.authenticode = Some(details);
+                }
             } else {
                 report.parse_warnings.push(
                     "PE certificate table points outside the file; signature presence is invalid"

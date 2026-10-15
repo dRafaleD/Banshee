@@ -632,6 +632,7 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
                 ""
             }
         )?;
+        crate::output::write_pe_metadata(output, executable, "")?;
         if let Some(present) = executable.signature_present {
             writeln!(
                 output,

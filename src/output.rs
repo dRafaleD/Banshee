@@ -699,8 +699,77 @@ pub fn write_pe_metadata(
     if let Some(callbacks) = executable.tls_callbacks {
         writeln!(output, "{prefix}TLS callbacks: {callbacks}")?;
     }
+    write_managed_and_signature(output, executable, prefix)
+}
+
+/// .NET metadata and Authenticode lines, as `Label: value`.
+pub fn write_managed_and_signature(
+    output: &mut dyn Write,
+    executable: &crate::file_inspect::ExecutableReport,
+    prefix: &str,
+) -> io::Result<()> {
     if let Some(dotnet) = &executable.dotnet {
         write_dotnet(output, dotnet, prefix)?;
+    }
+    if let Some(signature) = &executable.authenticode {
+        write_authenticode(output, signature, prefix)?;
+    }
+    Ok(())
+}
+
+fn write_authenticode(
+    output: &mut dyn Write,
+    signature: &crate::file_inspect::AuthenticodeReport,
+    prefix: &str,
+) -> io::Result<()> {
+    match &signature.signer {
+        Some(signer) => writeln!(
+            output,
+            "{prefix}Authenticode signer: {} (issued by {}); valid {} to {}{}",
+            metadata_name(&signer.subject),
+            metadata_name(&signer.issuer),
+            signer.not_before,
+            signer.not_after,
+            if signer.self_signed {
+                "; self-signed"
+            } else {
+                ""
+            }
+        )?,
+        None => writeln!(output, "{prefix}Authenticode signer: not identified")?,
+    }
+    writeln!(
+        output,
+        "{prefix}Authenticode: digest {}; timestamped {}; {} certificate(s){}; signature NOT verified",
+        signature.digest_algorithm,
+        if signature.timestamped { "yes" } else { "no" },
+        signature.certificates.len(),
+        if signature.nested_signatures > 0 {
+            format!("; {} nested signature(s)", signature.nested_signatures)
+        } else {
+            String::new()
+        }
+    )?;
+    for nested in &signature.nested_signers {
+        writeln!(
+            output,
+            "{prefix}Authenticode nested signer: {} (issued by {}); digest {}",
+            metadata_name(&nested.signer.subject),
+            metadata_name(&nested.signer.issuer),
+            nested.digest_algorithm
+        )?;
+    }
+    let chain: Vec<String> = signature
+        .certificates
+        .iter()
+        .map(|certificate| certificate.subject.clone())
+        .collect();
+    if !chain.is_empty() {
+        writeln!(
+            output,
+            "{prefix}Authenticode certificates: {}",
+            joined(&chain, 8)
+        )?;
     }
     Ok(())
 }

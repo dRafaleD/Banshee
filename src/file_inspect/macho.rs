@@ -182,6 +182,7 @@ fn inspect_thin(bytes: &[u8], base: u64) -> Result<Option<ExecutableReport>> {
         tls_callbacks: None,
         universal_architectures: Vec::new(),
         dotnet: None,
+        authenticode: None,
     };
 
     if command_count > MAX_LOAD_COMMANDS {
