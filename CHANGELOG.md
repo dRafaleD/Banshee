@@ -7,6 +7,10 @@ changes must be called out explicitly. Tags are immutable.
 
 ### Added
 
+- `--format sarif` for `report` and `scan` writes a SARIF 2.1.0 log. Each
+  finding keeps its source (rule ID `banshee/<source>/<kind>`), severity
+  (`note`, `warning`, `error`) and the file hash; absolute paths are written
+  as `file://` URIs.
 - `banshee strings` lists printable ASCII and UTF-16LE strings with their
   offsets (`--min-length`, `--encoding`, `--plain`, `--json`); `--max-strings`
   bounds the list while the total is still counted.
