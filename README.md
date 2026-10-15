@@ -251,6 +251,10 @@ inputs cannot be uploaded. Reports open in a sandboxed frame without scripts.
 The browser build omits XZ decompression and JWT/X.509 signature checks, which
 need native libraries; use the command-line tool for those.
 
+The `Browser demo` workflow (`.github/workflows/pages.yml`) builds the same page
+and publishes it to GitHub Pages as `index.html` on every change to the browser
+build. Enable it once under Settings > Pages > Source: GitHub Actions.
+
 ## Install
 
 ### Prebuilt packages
