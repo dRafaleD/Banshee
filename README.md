@@ -34,7 +34,7 @@ Development guides: [installation](docs/INSTALLATION.md),
 | --- | --- | --- |
 | Understand an unknown value | `whatis`, `entropy`, `recipe` | Decoding layers and explainable signals |
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
-| Inspect local artifacts | `file inspect`, `strings`, `jwt`, `cert`, `hash` | Structural metadata for archives, PE/ELF/Mach-O executables, Office, RTF, PDF and LNK files, and printable strings |
+| Inspect local artifacts | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Structural metadata for archives, disk images, PE/ELF/Mach-O and .NET executables, Authenticode signers, Office, RTF, PDF, LNK, email and script files, plus strings and hex views |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
@@ -67,6 +67,8 @@ are typed without the `banshee` prefix. `banshee shell` opens it directly.
 - `pwd`, `cd`, `ls`, `clear` and `exit` are console built-ins, and a leading
   `/` is optional. Everything else is the normal command line with the same
   flags and output.
+- `history` lists the session's commands, `!N` repeats one, `save <file>`
+  stores them as a script and `run <file>` replays it on another sample.
 - `open sample.bin` keeps a file open for the session; the prompt then reads
   `banshee (sample.bin)>`. Use `@` for it in any command (`report @ --format
   json`, `whatis @`), or type `report`, `file`, `cert`, `scan`, `entropy`,
@@ -197,8 +199,21 @@ The initial foundation includes the following commands:
 - Inspects RTF documents for embedded OLE objects (Equation Editor, Package,
   OLE2Link), automatically updating objects, remote templates and DDE or
   remote-include fields, including RTF files with a truncated `{\rt` header.
-- Parses PE imports, named exports, section permissions, overlay data, and
-  certificate-table presence metadata without verifying Authenticode trust.
+- Inspects PowerShell, VBScript, JScript, HTA and batch files for encoded
+  commands, download-and-execute cradles, AMSI/Defender tampering, LOLBin
+  abuse, shadow-copy deletion and persistence, quoting the matching line.
+- Reads email (`.eml`) headers, authentication results, attachments (with
+  SHA-256) and links, flagging spoofed senders, risky or double-extension
+  attachments and links whose text shows another domain.
+- Lists ISO 9660 images and cabinets like archives and flags the executables,
+  shortcuts, scripts and hidden files inside; identifies 7-Zip, RAR, VHD(X)
+  and WIM files.
+- Parses PE imports, named exports, section permissions and overlay data,
+  and lists Authenticode signers, issuers, validity, digest, timestamps and
+  nested signatures without verifying trust.
+- Reads .NET metadata: assembly identity, referenced assemblies, P/Invoke
+  imports and notable framework calls, flagging obfuscator markers,
+  process-injection P/Invokes and in-memory assembly loading.
 - Computes pefile-compatible PE import hashes, decodes and validates Rich
   headers, counts TLS callbacks and reports per-section entropy.
 - Parses ELF interpreters, dynamic dependencies, RPATH/RUNPATH, section

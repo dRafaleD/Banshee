@@ -21,7 +21,35 @@ changes must be called out explicitly. Tags are immutable.
   `\objdata`, Equation Editor, Package, OLE2Link and script objects,
   automatically updating objects, remote templates, DDE fields and
   `INCLUDEPICTURE`/`INCLUDETEXT` fields that fetch remote or UNC content.
-
+- .NET metadata for managed PE files: runtime version, CLI flags, assembly
+  identity, referenced assemblies, P/Invoke imports and notable framework
+  references (reflection loading, Base64, decryption, process and network
+  calls). Obfuscator markers, P/Invoked process-injection APIs and
+  `Assembly.Load(byte[])` combined with decoding are flagged. Identity and
+  references matched .NET reflection on 230 framework assemblies.
+- Authenticode details for signed PE files: signer and issuer, validity,
+  digest algorithm, timestamp presence, embedded certificates and the signers
+  of nested signatures. Nothing is verified. Matched Get-AuthenticodeSignature
+  on 150 embedded-signed files. The text report now also prints imphash, Rich
+  header, TLS, .NET and Authenticode lines, and HTML reports show the latter two.
+- Script inspection for PowerShell, VBScript, JScript, HTA and batch files:
+  encoded commands, download-and-execute cradles, AMSI and Defender tampering,
+  in-memory loading, LOLBin abuse, shadow-copy deletion and persistence, each
+  quoting its line. Constructs common in admin scripts are only reported next
+  to a high-signal behavior (3 of 400 bundled Windows scripts are flagged).
+- Email (`.eml`) inspection: headers, Received chain, SPF/DKIM/DMARC results,
+  attachments with SHA-256 and links; spoofed sender domains, risky or
+  double-extension attachments and links whose text shows another domain are
+  flagged.
+- ISO 9660 images (with Joliet names) and cabinets are listed like archives,
+  flagging executables, shortcuts, scripts and hidden files; 7-Zip, RAR, VHD,
+  VHDX and WIM files are identified.
+- `banshee hexdump` shows a `hexdump -C` style window (`--offset`, `--length`,
+  `--width`); `strings` tags URLs, IPs, domains, emails, paths, registry keys,
+  commands, user agents and Base64 in JSON, and `--interesting` keeps only
+  those.
+- Console `history`, `!N`, `save <file>` and `run <file>` record, repeat,
+  save and replay a session's commands.
 - Local rules: `encoding = "wide" | "both"` matches literal and regex
   patterns as UTF-16LE text, `min_size`/`max_size` bound the input size, and
   `within = N` on an `all` condition requires it to follow one primary match

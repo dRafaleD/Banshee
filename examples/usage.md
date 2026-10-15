@@ -77,6 +77,13 @@ banshee file inspect Installer.app/Contents/MacOS/Installer   # Mach-O, universa
 banshee file inspect invoice.rtf        # embedded objects, remote templates, DDE
 banshee strings --file suspicious.exe --min-length 6
 banshee strings --file suspicious.exe --encoding utf16le --plain | sort -u
+banshee strings --file suspicious.exe --interesting   # URLs, IPs, paths, registry keys...
+banshee hexdump --file suspicious.exe --offset 0x3c -n 64
+banshee file inspect Installer.dll        # .NET assembly, P/Invokes, Authenticode signer
+banshee file inspect update.ps1           # download cradles, AMSI tampering, LOLBins
+banshee file inspect invoice.eml          # sender spoofing, attachments, links
+banshee file inspect delivery.iso         # files inside, shortcuts and executables flagged
+banshee rules import-yara library.yar --output library.toml   # wide, filesize, proximity
 # PE certificate-table presence is metadata only; signature trust is not verified.
 banshee report suspicious.exe
 banshee report suspicious.zip --format json --output report.json
