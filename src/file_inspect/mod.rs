@@ -17,6 +17,7 @@ mod document;
 mod dotnet;
 mod elf;
 mod email;
+mod java;
 mod macho;
 mod ordinals;
 mod pe;
@@ -234,6 +235,9 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
         report.format = "ZIP archive".to_owned();
         report.archive = Some(inspect_zip(bytes, max_entries, &mut report.findings)?);
         if let Some(document) = document::inspect_ooxml(bytes) {
+            report.format = document.kind.clone();
+            attach_document(&mut report, document);
+        } else if let Some(document) = java::inspect(bytes) {
             report.format = document.kind.clone();
             attach_document(&mut report, document);
         }

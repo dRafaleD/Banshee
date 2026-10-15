@@ -7,6 +7,12 @@ changes must be called out explicitly. Tags are immutable.
 
 ### Added
 
+- Java archive (JAR) and Android package (APK) inspection in `file inspect`,
+  `report` and `scan`: manifest fields, signing, Class-Path to remote
+  locations, embedded Windows executables, runtime class loading combined with
+  decoding, process creation combined with networking, APK permissions (SMS,
+  accessibility, overlay, device admin, package install), native ABIs and
+  `DexClassLoader` references. Bytecode is not decompiled.
 - `--format sarif` for `report` and `scan` writes a SARIF 2.1.0 log. Each
   finding keeps its source (rule ID `banshee/<source>/<kind>`), severity
   (`note`, `warning`, `error`) and the file hash; absolute paths are written

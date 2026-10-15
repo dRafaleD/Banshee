@@ -225,6 +225,9 @@ The initial foundation includes the following commands:
   dylibs, `LC_RPATH`, dynamic linker, entry point and code-signature
   presence, flagging writable and executable segments, stack execution,
   non-PIE executables and libraries loaded from writable paths.
+- Inspects JAR and APK files: manifest, signing, remote `Class-Path`, embedded
+  Windows executables, class-loading and process references, and risky
+  Android permission combinations, without decompiling code.
 - Validates and scans with bounded local TOML rules using regex, literal, or
   wildcard-hex patterns, optional metadata, file/entropy predicates, and
   compound conditions.
