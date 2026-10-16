@@ -259,9 +259,10 @@ fn verify_signature(
     })
 }
 
-/// jsonwebtoken before 10.3.0 skips the `exp` and `nbf` checks when the claim
-/// has the wrong JSON type (CVE-2026-25537), so a string `nbf` would pass as
-/// "time validated". Refuse such tokens instead of reporting them as valid.
+/// jsonwebtoken before 10.3.0 skipped the `exp` and `nbf` checks when the claim
+/// had the wrong JSON type (CVE-2026-25537), so a string `nbf` passed as "time
+/// validated". 10.3.0 fixes that; this check keeps the refusal independent of
+/// the library version.
 #[cfg(feature = "crypto-verify")]
 fn ensure_numeric_time_claims(claims: &Value) -> Result<()> {
     for name in ["exp", "nbf"] {
@@ -415,13 +416,17 @@ mod tests {
                 &EncodingKey::from_secret(b"test-secret"),
             )
             .expect("encode token");
-            let error = verify(
-                &token,
-                JwtAlgorithm::HS256,
-                hmac_options("test-secret", true),
-            )
-            .expect_err("malformed time claim must be refused");
-            assert!(format!("{error:#}").contains("time check cannot be trusted"));
+            // jsonwebtoken 10.3.0 refuses these itself; the extra check in
+            // `verify` keeps the guarantee independent of the library.
+            assert!(
+                verify(
+                    &token,
+                    JwtAlgorithm::HS256,
+                    hmac_options("test-secret", true)
+                )
+                .is_err(),
+                "malformed time claim must be refused: {claims}"
+            );
             // Without time validation the claim is not relied on.
             assert!(
                 verify(

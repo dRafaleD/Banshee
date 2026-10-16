@@ -5,6 +5,13 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+### Changed
+
+- jsonwebtoken is updated to 10.3.0, which fixes CVE-2026-25537 (malformed
+  `exp`/`nbf` claims skipped the time checks). It signs and verifies through
+  aws-lc-rs with `prebuilt-nasm`, so Windows builds still need no NASM. The
+  `rsa` crate (RUSTSEC-2023-0071, no fix) is not part of the build.
+
 ### Fixed
 
 - `jwt verify` refuses tokens whose `exp` or `nbf` claim is not a non-negative
