@@ -244,6 +244,9 @@ fn verify_signature(
     }
     let data = decode::<Value>(token, &decoding_key, &validation)
         .context("JWT signature verification failed")?;
+    if options.validate_time {
+        ensure_numeric_time_claims(&data.claims)?;
+    }
 
     Ok(JwtVerifyReport {
         verified: true,
@@ -254,6 +257,23 @@ fn verify_signature(
         audience_validated: !options.audience.is_empty(),
         issuer_validated: !options.issuer.is_empty(),
     })
+}
+
+/// jsonwebtoken before 10.3.0 skips the `exp` and `nbf` checks when the claim
+/// has the wrong JSON type (CVE-2026-25537), so a string `nbf` would pass as
+/// "time validated". Refuse such tokens instead of reporting them as valid.
+#[cfg(feature = "crypto-verify")]
+fn ensure_numeric_time_claims(claims: &Value) -> Result<()> {
+    for name in ["exp", "nbf"] {
+        if let Some(value) = claims.get(name)
+            && value.as_u64().is_none()
+        {
+            bail!(
+                "JWT claim '{name}' is not a non-negative integer, so its time check cannot be trusted"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn decode_segment(segment: &str, name: &str) -> Result<Value> {
@@ -378,6 +398,40 @@ mod tests {
         .expect("valid signature");
         assert!(report.verified);
         assert_eq!(report.payload["sub"], "123");
+    }
+
+    #[cfg(feature = "crypto-verify")]
+    #[test]
+    fn rejects_time_claims_that_are_not_integers() {
+        for claims in [
+            json!({"sub": "1", "nbf": "99999999999"}),
+            json!({"sub": "1", "exp": "99999999999"}),
+            json!({"sub": "1", "exp": 4_102_444_800.5}),
+            json!({"sub": "1", "nbf": null}),
+        ] {
+            let token = encode(
+                &Header::new(jsonwebtoken::Algorithm::HS256),
+                &claims,
+                &EncodingKey::from_secret(b"test-secret"),
+            )
+            .expect("encode token");
+            let error = verify(
+                &token,
+                JwtAlgorithm::HS256,
+                hmac_options("test-secret", true),
+            )
+            .expect_err("malformed time claim must be refused");
+            assert!(format!("{error:#}").contains("time check cannot be trusted"));
+            // Without time validation the claim is not relied on.
+            assert!(
+                verify(
+                    &token,
+                    JwtAlgorithm::HS256,
+                    hmac_options("test-secret", false)
+                )
+                .is_ok()
+            );
+        }
     }
 
     #[cfg(feature = "crypto-verify")]
