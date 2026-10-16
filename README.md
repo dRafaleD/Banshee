@@ -259,33 +259,33 @@ build. Enable it once under Settings > Pages > Source: GitHub Actions.
 
 ### Prebuilt packages
 
-[Banshee v0.2.0](https://github.com/dRafaleD/Banshee/releases/tag/v0.2.0) is
+[Banshee v0.3.0](https://github.com/dRafaleD/Banshee/releases/tag/v0.3.0) is
 published as an alpha pre-release with packages for five platforms. Each archive
 holds the binary, shell completions, a manual page, examples and documentation.
 
 | Platform | Archive |
 | --- | --- |
-| Windows x86_64 | `banshee-0.2.0-x86_64-pc-windows-msvc.zip` |
-| Linux x86_64 (glibc) | `banshee-0.2.0-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux ARM64 (glibc) | `banshee-0.2.0-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS Intel | `banshee-0.2.0-x86_64-apple-darwin.tar.gz` |
-| macOS Apple Silicon | `banshee-0.2.0-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `banshee-0.3.0-x86_64-pc-windows-msvc.zip` |
+| Linux x86_64 (glibc) | `banshee-0.3.0-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 (glibc) | `banshee-0.3.0-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS Intel | `banshee-0.3.0-x86_64-apple-darwin.tar.gz` |
+| macOS Apple Silicon | `banshee-0.3.0-aarch64-apple-darwin.tar.gz` |
 
 Download the archive and its `.sha256` file into one directory and check the
 checksum before extracting:
 
 ```bash
-sha256sum --check banshee-0.2.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-tar -xzf banshee-0.2.0-x86_64-unknown-linux-gnu.tar.gz
-./banshee-0.2.0-x86_64-unknown-linux-gnu/banshee doctor
+sha256sum --check banshee-0.3.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf banshee-0.3.0-x86_64-unknown-linux-gnu.tar.gz
+./banshee-0.3.0-x86_64-unknown-linux-gnu/banshee doctor
 ```
 
 ```powershell
-$archive = 'banshee-0.2.0-x86_64-pc-windows-msvc.zip'
+$archive = 'banshee-0.3.0-x86_64-pc-windows-msvc.zip'
 $expected = ((Get-Content "$archive.sha256").Trim() -split '\s+')[0]
 if ((Get-FileHash $archive -Algorithm SHA256).Hash -ine $expected) { throw 'Checksum mismatch' }
 Expand-Archive $archive
-.\banshee-0.2.0-x86_64-pc-windows-msvc\banshee.exe doctor
+.\banshee-0.3.0-x86_64-pc-windows-msvc\banshee.exe doctor
 ```
 
 On macOS use `shasum -a 256 -c` instead of `sha256sum --check`. To check who
