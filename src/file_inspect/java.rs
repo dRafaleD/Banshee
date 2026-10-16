@@ -71,7 +71,11 @@ fn contains_text(data: &[u8], text: &str) -> bool {
 /// Returns a report for Android packages and Java archives, `None` for other ZIPs.
 pub(super) fn inspect(bytes: &[u8]) -> Option<DocumentReport> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-    let names: Vec<String> = zip.file_names().map(str::to_owned).collect();
+    let names: Vec<String> = zip
+        .file_names()
+        .filter_map(Result::ok)
+        .map(std::borrow::Cow::into_owned)
+        .collect();
     let has = |name: &str| names.iter().any(|candidate| candidate == name);
     if has("AndroidManifest.xml") && names.iter().any(|name| name.ends_with(".dex")) {
         return Some(inspect_apk(&mut zip, &names));

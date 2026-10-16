@@ -22,7 +22,11 @@ pub(super) fn inspect_zip(
         let entry = zip
             .by_index(index)
             .with_context(|| format!("failed to read ZIP entry {index}"))?;
-        let name = entry.name().to_owned();
+        // A name that is not valid text is shown lossily instead of failing the listing.
+        let name = entry.name().map_or_else(
+            |_| String::from_utf8_lossy(entry.name_raw()).into_owned(),
+            std::borrow::Cow::into_owned,
+        );
         let path_safe = archive_path_is_safe(&name);
         if !path_safe {
             findings.push(format!("unsafe archive path: {name}"));

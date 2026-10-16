@@ -1,6 +1,6 @@
 [package]
 name = "banshee"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 rust-version = "1.88"
 description = "Offline, pipe-friendly security analysis toolkit"
@@ -69,7 +69,7 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 url = "2.5"
 x509-parser = "0.18"
 xz2 = { version = "0.1", optional = true }
-zip = { version = "7.2", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.3", default-features = false, features = ["deflate"] }
 rustyline = { version = "18.0.1", default-features = false, optional = true }
 
 [dev-dependencies]
