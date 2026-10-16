@@ -5,7 +5,13 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+## 0.3.1 — 2026-10-16
+
 ### Changed
+
+- zip is updated to 9.0.3: every release of the 7.x line used before was
+  yanked, which failed the dependency audit. ZIP entries whose names are not
+  valid text are listed with a lossy name instead of failing the listing.
 
 - jsonwebtoken is updated to 10.3.0, which fixes CVE-2026-25537 (malformed
   `exp`/`nbf` claims skipped the time checks). It signs and verifies through

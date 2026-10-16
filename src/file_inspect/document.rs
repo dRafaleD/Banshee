@@ -133,7 +133,11 @@ fn clip(value: &str) -> String {
 /// Unreadable parts become notes so one damaged part does not hide the rest.
 pub(super) fn inspect_ooxml(bytes: &[u8]) -> Option<DocumentReport> {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
-    let names = zip.file_names().map(str::to_owned).collect::<Vec<_>>();
+    let names = zip
+        .file_names()
+        .filter_map(Result::ok)
+        .map(std::borrow::Cow::into_owned)
+        .collect::<Vec<_>>();
     if !names.iter().any(|name| name == "[Content_Types].xml") {
         return None;
     }
