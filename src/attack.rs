@@ -35,6 +35,7 @@ const HEURISTICS: &[(&str, &[&str])] = &[
     ("double extension", &["T1036.007"]),
     ("reply-to domain", &["T1566"]),
     ("contains a hidden file", &["T1564.001"]),
+    ("onenote notebook embeds a", &["T1566.001", "T1204.002"]),
     // Executables.
     ("upx packer markers", &["T1027.002"]),
     ("packer-associated", &["T1027.002"]),

@@ -20,6 +20,7 @@ mod email;
 mod evtx;
 mod java;
 mod macho;
+mod onenote;
 mod ordinals;
 mod pe;
 mod pe_extra;
@@ -249,6 +250,10 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
     } else if document::is_lnk(bytes) {
         report.format = "Windows shortcut (LNK)".to_owned();
         let document = document::inspect_lnk(bytes)?;
+        attach_document(&mut report, document);
+    } else if onenote::is_onenote(bytes) {
+        let document = onenote::inspect(bytes);
+        report.format = document.kind.clone();
         attach_document(&mut report, document);
     } else if evtx::is_evtx(bytes) {
         report.format = "Windows event log (EVTX)".to_owned();

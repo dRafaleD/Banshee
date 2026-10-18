@@ -19,6 +19,11 @@ changes must be called out explicitly. Tags are immutable.
   detections), CRC32 mismatches and missing record IDs. String values from
   event data feed IOC extraction in `report`, `scan` and `evidence`. Counts
   match `Get-WinEvent` on exported Application, System and PowerShell logs.
+- `file inspect` reads OneNote sections (`.one`): every embedded file is
+  listed with its content type, size and SHA-256, and executables, scripts,
+  shortcuts, archives and OLE files are flagged as lure payloads. Script text
+  feeds IOC extraction. Embedded file names are not decoded. Tested against
+  the MS-ONESTORE structure with synthetic files only.
 - TLSH fuzzy hashes: `hash tlsh` and `hash compare-tlsh`, a `tlsh` field in
   report hashes (omitted for inputs under 50 bytes or too uniform), and
   `tlsh_distance` in `diff`. Digests and distances match py-tlsh 5.0.0.

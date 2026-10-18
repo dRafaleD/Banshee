@@ -35,7 +35,7 @@ Development guides: [installation](docs/INSTALLATION.md),
 | --- | --- | --- |
 | Understand an unknown value | `whatis`, `entropy`, `recipe` | Decoding layers and explainable signals |
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
-| Inspect local artifacts | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Structural metadata for archives, disk images, PE/ELF/Mach-O and .NET executables, Authenticode signers, Office, RTF, PDF, LNK, email, script and EVTX event log files, plus strings and hex views |
+| Inspect local artifacts | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Structural metadata for archives, disk images, PE/ELF/Mach-O and .NET executables, Authenticode signers, Office, RTF, PDF, LNK, OneNote, email, script and EVTX event log files, plus strings and hex views |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
 | Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
