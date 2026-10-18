@@ -46,6 +46,9 @@ pub(super) enum BinaryTransforms {
 pub(super) fn decode(kind: EncodingKind, input: &str) -> Option<DecodeResult> {
     match kind {
         EncodingKind::Base64 => decode_base64(input),
+        EncodingKind::Base32 => crate::codec::decode(input, crate::codec::Codec::Base32)
+            .ok()
+            .and_then(|bytes| decode_binary(bytes, BinaryTransforms::EncodedPayload)),
         EncodingKind::Hex => decode_hex(input),
         EncodingKind::UrlEncoding => text_result(decode_url(input)?),
         EncodingKind::HtmlEntity => {

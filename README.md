@@ -142,7 +142,7 @@ target/release/banshee export case-evidence --format stix --output observables.s
 
 ### What it can help with
 
-- Decode layered Base64, hexadecimal, URL/HTML encoding, compression, and recipes.
+- Decode layered Base64, Base32, hexadecimal, URL/HTML encoding, compression, and recipes.
 - Extract and normalize URLs, domains, IP addresses, hashes, emails, and other IOCs.
 - Track IOC source, line, column, and bounded optional context.
 - Detect common credential and private-key markers with safe default redaction.
@@ -163,9 +163,11 @@ target/release/banshee export case-evidence --format stix --output observables.s
 
 The initial foundation includes the following commands:
 
-- Detects Base64, hexadecimal, URL encoding, and HTML entities.
+- Detects Base64, Base32 (padded or not, either letter case), hexadecimal, URL
+  encoding, and HTML entities. In `analyze`, `extract` and reports, the value
+  of a `key=value` or `key:value` token is decoded too.
 - Recursively decodes nested layers with depth and size limits.
-- Detects Base64/Hex-wrapped gzip and zlib layers with a 16 MiB decompression limit.
+- Detects Base64/Base32/Hex-wrapped gzip and zlib layers with a 16 MiB decompression limit.
 - Unwraps UTF-16LE text (for example PowerShell `-EncodedCommand`) and
   heuristic single-byte and repeating-key XOR layers inside Base64/Hex
   payloads; XOR keys are reported and never treated as certain.

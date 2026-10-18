@@ -19,6 +19,7 @@ pub(super) fn detect_best(input: &str) -> Option<Detection> {
         detect_url(input),
         detect_hex(input),
         detect_base64(input),
+        detect_base32(input),
         super::script::detect(input),
     ]
     .into_iter()
@@ -78,6 +79,53 @@ fn detect_base64(input: &str) -> Option<Detection> {
     Some(Detection {
         kind: EncodingKind::Base64,
         confidence: (0.72_f32 + printable * 0.2 + padding_bonus).min(0.99_f32),
+    })
+}
+
+/// RFC 4648 Base32, padded or not, in one letter case. Mixed-case input is
+/// left to Base64, whose alphabet contains every Base32 character.
+fn detect_base32(input: &str) -> Option<Detection> {
+    let compact: String = input
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let body = compact.trim_end_matches('=');
+    if body.len() < 8 {
+        return None;
+    }
+    let upper = body
+        .bytes()
+        .all(|byte| byte.is_ascii_uppercase() || (b'2'..=b'7').contains(&byte));
+    let lower = body
+        .bytes()
+        .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte));
+    if !upper && !lower {
+        return None;
+    }
+
+    let decoded = crate::codec::decode(&compact, crate::codec::Codec::Base32).ok()?;
+    if let Some(confidence) = encoded_payload_confidence(&decoded) {
+        return Some(Detection {
+            kind: EncodingKind::Base32,
+            confidence,
+        });
+    }
+    let text = std::str::from_utf8(&decoded).ok()?;
+    let printable = printable_ratio(text);
+    if printable < 0.85 || !text.chars().any(char::is_alphanumeric) {
+        return None;
+    }
+
+    // Base32 output is rarely text by chance, so a clean decode is strong
+    // evidence; padding to a multiple of eight adds a little more.
+    let padding_bonus = if compact.len() > body.len() {
+        0.03
+    } else {
+        0.0
+    };
+    Some(Detection {
+        kind: EncodingKind::Base32,
+        confidence: (0.8_f32 + printable * 0.16 + padding_bonus).min(0.99_f32),
     })
 }
 

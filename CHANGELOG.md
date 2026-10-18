@@ -22,6 +22,12 @@ changes must be called out explicitly. Tags are immutable.
 
 ### Changed
 
+- `whatis` and content analysis detect and decode Base32 (padded or
+  unpadded, upper or lower case), including Base32-wrapped Base64, gzip and
+  zlib. Mixed-case text and Base32-alphabet words that do not decode to text
+  are not treated as Base32.
+- `analyze`, `extract` and reports also decode the value of `key=value` and
+  `key:value` tokens, so `payload=<Base64>` is no longer missed.
 - Library API: `report::generate`, `scan::ScanOptions` and
   `evidence::CreateOptions` take a `report::RuleSource` (`rules`) instead of a
   rule file path (`rule_file`). Report and bundle JSON are unchanged.
