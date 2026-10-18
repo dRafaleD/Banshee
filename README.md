@@ -379,7 +379,7 @@ banshee cert inspect certificate.pem
 # Produce machine-readable output for a pipeline.
 banshee analyze --format json --file suspicious.bin
 
-# Save a unified report; add --rules to include local rule matches.
+# Save a unified report; add --rules FILE or --builtin-rules for rule matches.
 banshee report suspicious.bin --format json --output report.json
 banshee report suspicious.bin --rules examples/rules.toml --format markdown --output report.md
 
@@ -578,6 +578,29 @@ kind = "literal"
 pattern = "cmd.exe"
 case_insensitive = true
 ```
+
+### Built-in rule pack
+
+`--builtin-rules` applies a starter pack of about 35 rules compiled into
+Banshee, so `rules scan`, `report`, `scan` and `evidence create` work without a
+rule file. The pack covers PowerShell cradles and encoded commands, LOLBin
+downloads (certutil, mshta, regsvr32, rundll32, bitsadmin), shadow-copy
+deletion and other ransomware preparation, Defender tampering, Mimikatz and
+LSASS dumping, VBA/VBScript/JScript execution, PHP/JSP/ASPX web shells, Unix
+reverse shells, and webhook, bot-API, paste-site and onion addresses. Every
+rule carries a category, a confidence and ATT&CK IDs.
+
+```bash
+banshee rules builtin --list                 # IDs, severities, descriptions
+banshee rules builtin > my-rules.toml        # start your own pack from it
+banshee report suspicious.ps1 --builtin-rules
+banshee scan ./samples --recursive --builtin-rules --format jsonl
+```
+
+Reports record the rule source as `builtin`. Several of these commands are
+also used by administrators and installers, so low-confidence matches in
+particular need review. `--builtin-rules` and `--rules` cannot be combined;
+to extend the pack, print it and add your rules to the copy.
 
 ### YARA interoperability
 

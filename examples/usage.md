@@ -107,6 +107,9 @@ banshee scan ./samples --recursive --max-file-size 32MiB --max-total-size 512MiB
 banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
 banshee scan ./samples --recursive --jobs 1   # sequential; output is identical
 banshee rules validate examples/rules.toml
+banshee rules builtin --list                       # the starter pack compiled into Banshee
+banshee rules scan --builtin-rules --file update.ps1
+banshee report suspicious.ps1 --builtin-rules --format markdown
 banshee rules export-yara examples/rules.toml --output banshee.yar
 banshee rules import-yara community.yar --output imported.toml
 banshee rules validate examples/rules.toml --json

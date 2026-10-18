@@ -345,7 +345,7 @@ pub struct ReportSummary {
 
 pub fn generate(
     path: &Path,
-    rule_file: Option<&Path>,
+    rules: Option<RuleSource<'_>>,
     max_entries: usize,
     max_depth: u8,
     max_tokens: usize,
@@ -363,7 +363,7 @@ pub fn generate(
     generate_from_bytes(
         &bytes,
         &path.display().to_string(),
-        rule_file.map(RuleSource::File),
+        rules,
         max_entries,
         max_depth,
         max_tokens,
@@ -379,6 +379,41 @@ pub enum RuleSource<'a> {
         label: &'a str,
         source: &'a str,
     },
+}
+
+impl<'a> RuleSource<'a> {
+    /// The rule pack compiled into Banshee.
+    pub fn builtin() -> Self {
+        Self::Inline {
+            label: crate::rules::BUILTIN_RULES_LABEL,
+            source: crate::rules::BUILTIN_RULES,
+        }
+    }
+
+    /// Picks the built-in pack, a rule file, or no rules from CLI flags.
+    pub fn from_flags(file: Option<&'a Path>, builtin: bool) -> Option<Self> {
+        if builtin {
+            Some(Self::builtin())
+        } else {
+            file.map(Self::File)
+        }
+    }
+
+    /// The rule file path, or the inline label, as reports record it.
+    pub fn label(&self) -> String {
+        match self {
+            Self::File(path) => path.display().to_string(),
+            Self::Inline { label, .. } => (*label).to_owned(),
+        }
+    }
+
+    /// Checks that the rules compile, without scanning anything.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::File(path) => crate::rules::validate_file(path).map(drop),
+            Self::Inline { source, .. } => crate::rules::validate_source(source).map(drop),
+        }
+    }
 }
 
 /// Builds a report for bytes already in memory, for example in a browser

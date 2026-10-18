@@ -896,6 +896,53 @@ fn file_inspect_reports_elf_headers() {
 }
 
 #[test]
+fn builtin_rules_are_listed_printed_and_applied() {
+    let mut list = Command::cargo_bin("banshee").expect("binary");
+    list.args(["rules", "builtin", "--list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Built-in rules: "))
+        .stdout(predicate::str::contains("builtin.lolbin.certutil-decode"));
+
+    let mut print = Command::cargo_bin("banshee").expect("binary");
+    print
+        .args(["rules", "builtin"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("# Banshee built-in"));
+
+    // Joined at run time so the test source never holds the whole command.
+    let sample = ["cert", "util -de", "code payload.b64 payload.exe"].concat();
+    let mut scan = Command::cargo_bin("banshee").expect("binary");
+    scan.args(["rules", "scan", "--builtin-rules", "--fail-on-findings"])
+        .write_stdin(sample.clone())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("builtin.lolbin.certutil-decode"));
+
+    let mut conflict = Command::cargo_bin("banshee").expect("binary");
+    conflict
+        .args(["rules", "scan", "--builtin-rules", "--rules", "x.toml", "x"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
+
+    let path = temp_fixture("builtin-report.txt");
+    std::fs::write(&path, &sample).expect("write sample");
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .args(["report", "--builtin-rules", "--format", "json"])
+        .arg(&path)
+        .output()
+        .expect("run report");
+    std::fs::remove_file(&path).expect("remove fixture");
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("report JSON");
+    assert_eq!(report["rule_analysis"]["rule_file"], "builtin");
+    assert_eq!(report["rule_analysis"]["report"]["matched_rules"], 1);
+}
+
+#[test]
 fn rules_validate_and_scan_offline_with_finding_exit_status() {
     let path = temp_fixture("rules.toml");
     std::fs::write(

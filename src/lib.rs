@@ -745,9 +745,34 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 }
                 report_conversion(&conversion, "Banshee TOML")?;
             }
+            RulesCommand::Builtin(args) => {
+                if args.list {
+                    let report = rules::validate_source(rules::BUILTIN_RULES)?;
+                    output::print_json_or(&report, args.json, |output| {
+                        writeln!(output, "Built-in rules: {}", report.rule_count)?;
+                        for rule in &report.rules {
+                            writeln!(output, "{}	{}	{}", rule.id, rule.severity, rule.description)?;
+                        }
+                        Ok(())
+                    })?;
+                } else {
+                    output::with_output(|output| {
+                        output.write_all(rules::BUILTIN_RULES.as_bytes())?;
+                        Ok(())
+                    })?;
+                }
+            }
             RulesCommand::Scan(args) => {
                 let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
-                let report = rules::scan(&args.rules, &value)?;
+                let report =
+                    match report::RuleSource::from_flags(args.rules.as_deref(), args.builtin_rules)
+                    {
+                        Some(report::RuleSource::File(path)) => rules::scan(path, &value)?,
+                        Some(report::RuleSource::Inline { source, .. }) => {
+                            rules::scan_source(source, &value)?
+                        }
+                        None => anyhow::bail!("rules scan needs --rules PATH or --builtin-rules"),
+                    };
                 has_findings |= report.matched_rules > 0;
                 output::print_json_or(&report, args.json, |output| {
                     writeln!(output, "Input bytes: {}", report.input_bytes)?;
@@ -860,7 +885,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         Command::Report(args) => {
             let report = report::generate(
                 &args.path,
-                args.rules.as_deref(),
+                report::RuleSource::from_flags(args.rules.as_deref(), args.builtin_rules),
                 args.max_entries,
                 args.max_depth,
                 args.max_tokens,
@@ -873,7 +898,10 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 &args.path,
                 scan::ScanOptions {
                     recursive: args.recursive,
-                    rule_file: args.rules.as_deref(),
+                    rules: report::RuleSource::from_flags(
+                        args.rules.as_deref(),
+                        args.builtin_rules,
+                    ),
                     includes: &args.include,
                     excludes: &args.exclude,
                     max_files: args.max_files,
@@ -898,7 +926,10 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     &args.path,
                     target,
                     evidence::CreateOptions {
-                        rule_file: args.rules.as_deref(),
+                        rules: report::RuleSource::from_flags(
+                            args.rules.as_deref(),
+                            args.builtin_rules,
+                        ),
                         include_sample: args.include_sample,
                         max_entries: args.max_entries,
                         max_depth: args.max_depth,

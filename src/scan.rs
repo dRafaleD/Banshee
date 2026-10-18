@@ -26,7 +26,7 @@ pub enum ScanFormat {
 #[derive(Debug, Clone, Copy)]
 pub struct ScanOptions<'a> {
     pub recursive: bool,
-    pub rule_file: Option<&'a Path>,
+    pub rules: Option<crate::report::RuleSource<'a>>,
     pub includes: &'a [String],
     pub excludes: &'a [String],
     pub max_files: usize,
@@ -143,8 +143,8 @@ enum DiscoveredKind {
 
 pub fn scan(root: &Path, options: ScanOptions<'_>) -> Result<DirectoryScanReport> {
     let filters = CompiledFilters::new(options.includes, options.excludes)?;
-    if let Some(rule_file) = options.rule_file {
-        crate::rules::validate_file(rule_file)?;
+    if let Some(rules) = options.rules {
+        rules.validate()?;
     }
 
     let traversal_limit = options
@@ -496,7 +496,7 @@ fn analyze_file(
 ) -> FileScanResult {
     match crate::report::generate(
         path,
-        options.rule_file,
+        options.rules,
         options.max_entries,
         options.max_depth,
         options.max_tokens,

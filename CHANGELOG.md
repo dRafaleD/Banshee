@@ -5,6 +5,21 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+### Added
+
+- A built-in starter rule pack of 35 rules (PowerShell, LOLBins, ransomware
+  preparation, Defender tampering, credential dumping, Office scripts, web
+  shells, Unix reverse shells, web-service C2 and UPX), each with category,
+  confidence and ATT&CK IDs. `--builtin-rules` applies it in `rules scan`,
+  `report`, `scan` and `evidence create`; `rules builtin` prints it as TOML
+  or lists it with `--list`.
+
+### Changed
+
+- Library API: `report::generate`, `scan::ScanOptions` and
+  `evidence::CreateOptions` take a `report::RuleSource` (`rules`) instead of a
+  rule file path (`rule_file`). Report and bundle JSON are unchanged.
+
 ## 0.3.1 — 2026-10-16
 
 ### Changed

@@ -1,0 +1,391 @@
+# Banshee built-in starter rule pack.
+#
+# Used by `--builtin-rules` and printed by `banshee rules builtin`. The rules
+# describe common attacker tradecraft seen in scripts, documents, logs and
+# binaries. A match is a triage signal, not a verdict: administrators and
+# installers use several of these commands legitimately. Confidence reflects
+# how often a match is benign in ordinary files.
+version = 1
+
+# --- PowerShell ---------------------------------------------------------------
+
+[[rules]]
+id = "builtin.powershell.encoded-command"
+description = "PowerShell started with an encoded command line"
+severity = "high"
+pattern = '(?i)powershell(?:\.exe)?\s+[^\r\n]{0,120}-(?:e|ec|enc|encodedcommand)\s+[A-Za-z0-9+/=]{20,}'
+tags = ["powershell", "obfuscation"]
+category = "execution"
+confidence = "high"
+attack = ["T1059.001", "T1027"]
+
+[[rules]]
+id = "builtin.powershell.download-cradle"
+description = "PowerShell downloads content and evaluates it in memory"
+severity = "high"
+pattern = '(?i)(?:IEX|Invoke-Expression)[\s(]{0,8}(?:\(\s*)?(?:New-Object\s+(?:System\.)?Net\.WebClient|\[System\.Net\.WebClient\]|iwr\b|Invoke-WebRequest|irm\b|Invoke-RestMethod)'
+tags = ["powershell", "download"]
+category = "execution"
+confidence = "high"
+attack = ["T1059.001", "T1105"]
+
+[[rules]]
+id = "builtin.powershell.webclient-download"
+description = "PowerShell WebClient download method"
+severity = "medium"
+pattern = '(?i)\.Download(?:String|File|Data)(?:Async)?\s*\(\s*["\x27]?https?://'
+tags = ["powershell", "download"]
+category = "command-and-control"
+confidence = "medium"
+attack = ["T1105"]
+
+[[rules]]
+id = "builtin.powershell.hidden-window"
+description = "PowerShell started with a hidden window"
+severity = "medium"
+pattern = '(?i)powershell(?:\.exe)?[^\r\n]{0,200}\s-(?:w|win|window|windowstyle)\s+(?:h|hidden)\b'
+tags = ["powershell", "stealth"]
+category = "defense-evasion"
+confidence = "medium"
+attack = ["T1564.003"]
+
+[[rules]]
+id = "builtin.powershell.execution-policy-bypass"
+description = "PowerShell execution policy bypassed on the command line"
+severity = "low"
+pattern = '(?i)-(?:ep|exec|executionpolicy)\s+(?:bypass|unrestricted)\b'
+tags = ["powershell"]
+category = "defense-evasion"
+confidence = "low"
+attack = ["T1059.001"]
+
+[[rules]]
+id = "builtin.powershell.amsi-bypass"
+description = "Reference to AMSI internals commonly patched to disable scanning"
+severity = "high"
+pattern = '(?i)amsiInitFailed|AmsiScanBuffer|System\.Management\.Automation\.AmsiUtils'
+tags = ["powershell", "amsi"]
+category = "defense-evasion"
+confidence = "medium"
+attack = ["T1562.001"]
+
+# --- Living-off-the-land binaries ------------------------------------------------
+
+[[rules]]
+id = "builtin.lolbin.certutil-download"
+description = "certutil used to fetch a remote file"
+severity = "high"
+pattern = '(?i)certutil(?:\.exe)?[^\r\n]{0,80}\s[-/]urlcache\b'
+tags = ["lolbin", "download"]
+category = "command-and-control"
+confidence = "high"
+attack = ["T1105"]
+
+[[rules]]
+id = "builtin.lolbin.certutil-decode"
+description = "certutil used to decode a Base64 or hex payload"
+severity = "medium"
+pattern = '(?i)certutil(?:\.exe)?[^\r\n]{0,80}\s[-/]decode(?:hex)?\b'
+tags = ["lolbin", "decode"]
+category = "defense-evasion"
+confidence = "medium"
+attack = ["T1140"]
+
+[[rules]]
+id = "builtin.lolbin.mshta-inline"
+description = "mshta runs remote or inline script"
+severity = "high"
+pattern = '(?i)mshta(?:\.exe)?\s+["\x27]?(?:https?|javascript|vbscript):'
+tags = ["lolbin"]
+category = "defense-evasion"
+confidence = "high"
+attack = ["T1218.005"]
+
+[[rules]]
+id = "builtin.lolbin.regsvr32-remote-scriptlet"
+description = "regsvr32 loads a remote scriptlet"
+severity = "high"
+pattern = '(?i)regsvr32(?:\.exe)?[^\r\n]{0,120}/i:\s*["\x27]?https?://'
+tags = ["lolbin"]
+category = "defense-evasion"
+confidence = "high"
+attack = ["T1218.010"]
+
+[[rules]]
+id = "builtin.lolbin.rundll32-script"
+description = "rundll32 runs inline script"
+severity = "high"
+pattern = '(?i)rundll32(?:\.exe)?[^\r\n]{0,80}(?:javascript|vbscript):'
+tags = ["lolbin"]
+category = "defense-evasion"
+confidence = "high"
+attack = ["T1218.011"]
+
+[[rules]]
+id = "builtin.lolbin.bitsadmin-transfer"
+description = "bitsadmin creates a download job"
+severity = "medium"
+pattern = '(?i)bitsadmin(?:\.exe)?[^\r\n]{0,80}\s/(?:transfer|addfile)\b'
+tags = ["lolbin", "download"]
+category = "command-and-control"
+confidence = "medium"
+attack = ["T1197", "T1105"]
+
+# --- Persistence -----------------------------------------------------------------
+
+[[rules]]
+id = "builtin.persistence.run-key"
+description = "Reference to a Windows Run or RunOnce autostart key"
+severity = "low"
+pattern = '(?i)\\(?:Software\\)?(?:Wow6432Node\\)?Microsoft\\Windows\\CurrentVersion\\Run(?:Once)?\b'
+tags = ["persistence", "registry"]
+category = "persistence"
+confidence = "low"
+attack = ["T1547.001"]
+
+[[rules]]
+id = "builtin.persistence.scheduled-task"
+description = "Scheduled task created from the command line"
+severity = "low"
+pattern = '(?i)schtasks(?:\.exe)?\s+/create\b'
+tags = ["persistence"]
+category = "persistence"
+confidence = "low"
+attack = ["T1053.005"]
+
+# --- Defense evasion and impact --------------------------------------------------
+
+[[rules]]
+id = "builtin.impact.shadow-copy-deletion"
+description = "Volume shadow copies deleted"
+severity = "high"
+pattern = '(?i)vssadmin(?:\.exe)?\s+delete\s+shadows|wmic(?:\.exe)?\s+shadowcopy\s+delete|Win32_ShadowCopy[^\r\n]{0,80}\.Delete\('
+tags = ["ransomware"]
+category = "impact"
+confidence = "high"
+attack = ["T1490"]
+
+[[rules]]
+id = "builtin.impact.recovery-disabled"
+description = "Windows boot recovery disabled with bcdedit"
+severity = "high"
+pattern = '(?i)bcdedit(?:\.exe)?[^\r\n]{0,60}recoveryenabled\s+no|bcdedit(?:\.exe)?[^\r\n]{0,60}bootstatuspolicy\s+ignoreallfailures'
+tags = ["ransomware"]
+category = "impact"
+confidence = "high"
+attack = ["T1490"]
+
+[[rules]]
+id = "builtin.impact.ransom-note-phrase"
+description = "Typical ransom-note wording"
+severity = "medium"
+pattern = '(?i)(?:all\s+)?your\s+(?:files|documents|data|network)\s+(?:have|has)\s+been\s+encrypted'
+tags = ["ransomware"]
+category = "impact"
+confidence = "medium"
+attack = ["T1486"]
+
+[[rules]]
+id = "builtin.evasion.event-log-clear"
+description = "Windows event logs cleared"
+severity = "medium"
+pattern = '(?i)wevtutil(?:\.exe)?\s+(?:cl|clear-log)\b|Clear-EventLog\b'
+tags = ["anti-forensics"]
+category = "defense-evasion"
+confidence = "medium"
+attack = ["T1070.001"]
+
+[[rules]]
+id = "builtin.evasion.defender-tamper"
+description = "Microsoft Defender protection disabled or an exclusion added"
+severity = "high"
+pattern = '(?i)Set-MpPreference[^\r\n]{0,80}-Disable(?:RealtimeMonitoring|IOAVProtection|BehaviorMonitoring|ScriptScanning)|Add-MpPreference[^\r\n]{0,40}-Exclusion(?:Path|Process|Extension)'
+tags = ["defender"]
+category = "defense-evasion"
+confidence = "high"
+attack = ["T1562.001"]
+
+# --- Credential access -----------------------------------------------------------
+
+[[rules]]
+id = "builtin.credential.mimikatz-commands"
+description = "Mimikatz module commands"
+severity = "high"
+pattern = '(?i)sekurlsa::(?:logonpasswords|pth|tickets)|lsadump::(?:sam|secrets|dcsync)|privilege::debug'
+tags = ["mimikatz", "credential"]
+category = "credential-access"
+confidence = "high"
+attack = ["T1003"]
+
+[[rules]]
+id = "builtin.credential.lsass-minidump"
+description = "LSASS memory dumped through comsvcs.dll MiniDump"
+severity = "high"
+pattern = '(?i)comsvcs(?:\.dll)?[\s,#0-9]{0,8}MiniDump'
+tags = ["lsass", "credential"]
+category = "credential-access"
+confidence = "high"
+attack = ["T1003.001"]
+
+# --- Scripts and documents -------------------------------------------------------
+
+[[rules]]
+id = "builtin.script.vba-autoexec-shell"
+description = "VBA macro that runs automatically and starts a process"
+severity = "high"
+pattern = '(?i)\b(?:Auto_?Open|Document_Open|Workbook_Open|AutoExec)\b'
+tags = ["vba", "macro"]
+category = "execution"
+confidence = "medium"
+attack = ["T1059.005", "T1204.002"]
+
+[[rules.any]]
+pattern = '(?i)\bShell\s*\(|WScript\.Shell|Shell\.Application|\.ShellExecute\b'
+
+[[rules]]
+id = "builtin.script.wscript-shell"
+description = "Script creates a WScript.Shell object"
+severity = "low"
+pattern = '(?i)CreateObject\s*\(\s*["\x27]WScript\.Shell["\x27]\s*\)'
+tags = ["vbscript"]
+category = "execution"
+confidence = "low"
+attack = ["T1059.005"]
+
+[[rules]]
+id = "builtin.script.jscript-activex"
+description = "JScript creates ActiveX objects used for downloads or execution"
+severity = "medium"
+pattern = '(?i)new\s+ActiveXObject\s*\(\s*["\x27](?:WScript\.Shell|MSXML2\.(?:Server)?XMLHTTP|ADODB\.Stream|Scripting\.FileSystemObject)'
+tags = ["jscript"]
+category = "execution"
+confidence = "medium"
+attack = ["T1059.007"]
+
+# --- Web shells ------------------------------------------------------------------
+
+[[rules]]
+id = "builtin.webshell.php-eval-request"
+description = "PHP evaluates request input"
+severity = "high"
+pattern = '(?i)\b(?:eval|assert|system|passthru|shell_exec)\s*\(\s*(?:(?:base64_decode|gzinflate|str_rot13)\s*\(\s*)*\$_(?:POST|GET|REQUEST|COOKIE|SERVER)\b'
+tags = ["webshell", "php"]
+category = "persistence"
+confidence = "high"
+attack = ["T1505.003"]
+
+[[rules]]
+id = "builtin.webshell.jsp-runtime-exec"
+description = "JSP runs a command taken from the request"
+severity = "high"
+pattern = 'Runtime\.getRuntime\(\)\.exec\s*\(\s*request\.getParameter'
+tags = ["webshell", "jsp"]
+category = "persistence"
+confidence = "high"
+attack = ["T1505.003"]
+
+[[rules]]
+id = "builtin.webshell.aspx-process-request"
+description = "ASP.NET starts a process with request input"
+severity = "high"
+pattern = '(?i)Process\.Start\s*\([^\r\n]{0,120}Request(?:\.Form|\.QueryString|\.Params)?\s*\['
+tags = ["webshell", "aspx"]
+category = "persistence"
+confidence = "medium"
+attack = ["T1505.003"]
+
+# --- Unix shells -----------------------------------------------------------------
+
+[[rules]]
+id = "builtin.unix.dev-tcp-reverse-shell"
+description = "Bash /dev/tcp redirection typical of reverse shells"
+severity = "high"
+pattern = '(?:ba)?sh\s+-i\s*[<>&0-9\s]{0,8}/dev/tcp/[A-Za-z0-9.\-]{1,253}/[0-9]{1,5}|/dev/tcp/[A-Za-z0-9.\-]{1,253}/[0-9]{1,5}\s*0?>&1'
+tags = ["reverse-shell"]
+category = "execution"
+confidence = "high"
+attack = ["T1059.004"]
+
+[[rules]]
+id = "builtin.unix.netcat-exec"
+description = "netcat started with a shell attached"
+severity = "high"
+pattern = '(?i)\b(?:nc|ncat|netcat)(?:\.exe)?\s[^\r\n]{0,80}-[ce]\s+["\x27]?(?:/bin/(?:ba|z|da)?sh|cmd(?:\.exe)?|powershell)'
+tags = ["reverse-shell"]
+category = "execution"
+confidence = "high"
+attack = ["T1059.004"]
+
+[[rules]]
+id = "builtin.unix.download-pipe-shell"
+description = "Downloaded content piped straight into a shell"
+severity = "low"
+pattern = '(?i)\b(?:curl|wget)\s[^\r\n|]{0,200}\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b'
+tags = ["download"]
+category = "execution"
+confidence = "low"
+attack = ["T1059.004", "T1105"]
+
+# --- Command and control and exfiltration ----------------------------------------
+
+[[rules]]
+id = "builtin.c2.discord-webhook"
+description = "Discord webhook URL, often used for exfiltration"
+severity = "medium"
+pattern = 'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/[0-9]{5,}/'
+tags = ["exfiltration", "web-service"]
+category = "exfiltration"
+confidence = "medium"
+attack = ["T1567"]
+
+[[rules]]
+id = "builtin.c2.telegram-bot-api"
+description = "Telegram Bot API URL with an embedded token"
+severity = "medium"
+pattern = 'https://api\.telegram\.org/bot[0-9]{5,}:[A-Za-z0-9_\-]{30,}'
+tags = ["web-service"]
+category = "command-and-control"
+confidence = "medium"
+attack = ["T1102"]
+
+[[rules]]
+id = "builtin.c2.paste-site-raw"
+description = "Raw paste-site URL, often used to stage payloads"
+severity = "low"
+pattern = '(?i)https?://(?:pastebin\.com/raw/|paste\.ee/r/|rentry\.co/[A-Za-z0-9]+/raw)'
+tags = ["web-service", "staging"]
+category = "command-and-control"
+confidence = "low"
+attack = ["T1102", "T1105"]
+
+[[rules]]
+id = "builtin.c2.tor-onion-v3"
+description = "Tor v3 onion address"
+severity = "low"
+pattern = '\b[a-z2-7]{56}\.onion\b'
+tags = ["tor"]
+category = "command-and-control"
+confidence = "medium"
+attack = ["T1090.003"]
+
+# --- Binaries --------------------------------------------------------------------
+
+[[rules]]
+id = "builtin.binary.upx-packed"
+description = "Executable packed with UPX"
+severity = "low"
+kind = "literal"
+pattern = "UPX!"
+tags = ["packer"]
+category = "defense-evasion"
+confidence = "medium"
+attack = ["T1027.002"]
+file_types = ["pe", "elf"]
+
+[[rules.any]]
+kind = "regex"
+pattern = 'UPX[0-2]\x00'
+
+[[rules.any]]
+kind = "literal"
+pattern = "This file is packed with the UPX"

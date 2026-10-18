@@ -662,12 +662,25 @@ pub enum RulesCommand {
     ExportYara(RulesPathArgs),
     /// Convert a supported subset of YARA rules to Banshee TOML
     ImportYara(RulesPathArgs),
+    /// Print the built-in starter rule pack as TOML, or list its rules
+    Builtin(RulesBuiltinArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct RulesPathArgs {
     /// Input rule file
     pub path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct RulesBuiltinArgs {
+    /// List rule IDs, severities and descriptions instead of printing TOML
+    #[arg(long)]
+    pub list: bool,
+
+    /// Emit machine-readable JSON (with --list)
+    #[arg(long, requires = "list")]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -683,8 +696,17 @@ pub struct RulesValidateArgs {
 #[derive(Debug, Args)]
 pub struct RulesScanArgs {
     /// Local TOML rule file
-    #[arg(short, long, value_name = "PATH")]
-    pub rules: PathBuf,
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        required_unless_present = "builtin_rules"
+    )]
+    pub rules: Option<PathBuf>,
+
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
 
     #[command(flatten)]
     pub source: SourceArgs,
@@ -723,6 +745,10 @@ pub struct ReportArgs {
     #[arg(long, value_name = "PATH")]
     pub rules: Option<PathBuf>,
 
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
+
     /// Report output format
     #[arg(long, value_enum, default_value_t = crate::report::ReportFormat::Text)]
     pub format: crate::report::ReportFormat,
@@ -752,6 +778,10 @@ pub struct ScanArgs {
     /// Optional local TOML rule file applied to every selected file
     #[arg(long, value_name = "PATH")]
     pub rules: Option<PathBuf>,
+
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
 
     /// Include matching relative paths; supports *, **, and ?
     #[arg(long, value_name = "GLOB")]
@@ -819,6 +849,10 @@ pub struct EvidenceCreateArgs {
     /// Optional local TOML rule file
     #[arg(long, value_name = "PATH")]
     pub rules: Option<PathBuf>,
+
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
 
     /// Explicitly copy the source sample into the bundle as source-sample.bin
     #[arg(long)]

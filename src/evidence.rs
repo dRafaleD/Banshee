@@ -24,7 +24,7 @@ const REQUIRED_BUNDLE_ENTRIES: [&str; 6] = [
 
 #[derive(Debug, Clone, Copy)]
 pub struct CreateOptions<'a> {
-    pub rule_file: Option<&'a Path>,
+    pub rules: Option<crate::report::RuleSource<'a>>,
     pub include_sample: bool,
     pub max_entries: usize,
     pub max_depth: u8,
@@ -118,7 +118,7 @@ pub fn create(source: &Path, target: &Path, options: CreateOptions<'_>) -> Resul
 
     let report = crate::report::generate(
         source,
-        options.rule_file,
+        options.rules,
         options.max_entries,
         options.max_depth,
         options.max_tokens,
@@ -162,7 +162,7 @@ pub fn create(source: &Path, target: &Path, options: CreateOptions<'_>) -> Resul
         source_path: source.display().to_string(),
         source_sample_included: options.include_sample,
         options: BundleCommandOptions {
-            rule_file: options.rule_file.map(|path| path.display().to_string()),
+            rule_file: options.rules.map(|rules| rules.label()),
             max_entries: options.max_entries,
             max_depth: options.max_depth,
             max_tokens: options.max_tokens,
@@ -568,7 +568,7 @@ mod tests {
             &source,
             &bundle,
             CreateOptions {
-                rule_file: None,
+                rules: None,
                 include_sample: false,
                 max_entries: 100,
                 max_depth: 4,
