@@ -12,6 +12,7 @@ pub mod file_inspect;
 pub mod fuzzy;
 pub mod hash;
 pub mod hexdump;
+pub mod homoglyph;
 mod i18n;
 pub mod input;
 pub mod ioc;

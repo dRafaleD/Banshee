@@ -552,23 +552,37 @@ fn content_finding(item: &TokenAnalysis) -> ReportFinding {
 }
 
 fn ioc_finding(ioc: &Ioc) -> ReportFinding {
+    let lookalike = ioc.kind == crate::ioc::IocKind::Domain
+        && ioc
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with(crate::homoglyph::LOOKALIKE_PREFIX));
+    let note = match (&ioc.detail, ioc.kind) {
+        (Some(detail), crate::ioc::IocKind::Domain) => format!("{detail}; "),
+        _ => String::new(),
+    };
     ReportFinding {
         source: FindingSource::IocExtraction,
-        severity: Severity::Info,
+        severity: if lookalike {
+            Severity::Medium
+        } else {
+            Severity::Info
+        },
         kind: ioc.kind.to_string(),
         value: ioc.value.clone(),
-        detail: match (ioc.first_line, ioc.last_line) {
-            (Some(first), Some(last)) => format!(
-                "{} occurrence{}; lines {first}-{last}",
-                ioc.occurrences,
-                if ioc.occurrences == 1 { "" } else { "s" },
-            ),
-            _ => format!(
-                "{} occurrence{}; source position unavailable",
-                ioc.occurrences,
-                if ioc.occurrences == 1 { "" } else { "s" },
-            ),
-        },
+        detail: note
+            + &match (ioc.first_line, ioc.last_line) {
+                (Some(first), Some(last)) => format!(
+                    "{} occurrence{}; lines {first}-{last}",
+                    ioc.occurrences,
+                    if ioc.occurrences == 1 { "" } else { "s" },
+                ),
+                _ => format!(
+                    "{} occurrence{}; source position unavailable",
+                    ioc.occurrences,
+                    if ioc.occurrences == 1 { "" } else { "s" },
+                ),
+            },
     }
 }
 

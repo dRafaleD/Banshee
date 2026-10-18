@@ -22,6 +22,10 @@ changes must be called out explicitly. Tags are immutable.
 - TLSH fuzzy hashes: `hash tlsh` and `hash compare-tlsh`, a `tlsh` field in
   report hashes (omitted for inputs under 50 bytes or too uniform), and
   `tlsh_distance` in `diff`. Digests and distances match py-tlsh 5.0.0.
+- IOC extraction finds domains written with non-ASCII letters and records
+  them in Punycode; Punycode domains are decoded for review. Domains that mix
+  Latin with Cyrillic, Greek or Armenian letters, or read as an ASCII name,
+  carry a "possible homoglyph" detail and are medium-severity report findings.
 
 ### Changed
 

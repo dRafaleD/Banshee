@@ -178,6 +178,10 @@ The initial foundation includes the following commands:
 - Measures Shannon entropy and gives an explainable triage score.
 - Inspects JWT headers and payloads without claiming signature verification.
 - Extracts and normalizes defanged URLs, domains, IPv4/IPv6, hashes, emails, and MAC addresses.
+- Records internationalized domains in Punycode and flags lookalikes: names
+  that mix Latin with Cyrillic, Greek or Armenian letters, or that read as an
+  ASCII name (`раypal.com` with Cyrillic letters reads as `paypal.com`).
+  Reports list them as medium-severity findings.
 - Records bounded source locations and optional surrounding-line context for text IOCs.
 - Detects common cloud access-key, GitHub/Slack-style token, bearer-token,
   credential-assignment, database-URI password, and private-key candidates.

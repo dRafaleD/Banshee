@@ -634,7 +634,39 @@ fn extract_domains(input: &str, iocs: &mut IocCollector) {
         if !crate::tld::has_known_tld(&domain) {
             continue;
         }
-        iocs.record(matched.start(), IocKind::Domain, domain, None);
+        // Punycode labels are checked in their Unicode form.
+        let detail = domain
+            .split('.')
+            .any(|label| label.starts_with("xn--"))
+            .then(|| idna::domain_to_unicode(&domain))
+            .and_then(|(unicode, status)| status.ok().and(crate::homoglyph::assess(&unicode)));
+        iocs.record(matched.start(), IocKind::Domain, domain, detail);
+    }
+
+    // Domains written with non-ASCII letters are recorded in their ASCII
+    // (Punycode) form, which is what DNS, proxies and blocklists use.
+    static UNICODE_DOMAIN: OnceLock<Regex> = OnceLock::new();
+    let pattern = UNICODE_DOMAIN.get_or_init(|| {
+        Regex::new(r"\b(?:[\p{L}\p{N}](?:[\p{L}\p{N}\p{M}-]{0,61}[\p{L}\p{N}\p{M}])?\.)+[\p{L}\p{M}]{2,63}\b")
+            .expect("valid regex")
+    });
+    for matched in pattern.find_iter(input) {
+        if iocs.is_full() {
+            break;
+        }
+        let candidate = matched.as_str();
+        if candidate.is_ascii() {
+            continue;
+        }
+        let Ok(ascii) = idna::domain_to_ascii(candidate) else {
+            continue;
+        };
+        if !crate::tld::has_known_tld(&ascii) {
+            continue;
+        }
+        let (unicode, _) = idna::domain_to_unicode(&ascii);
+        let detail = crate::homoglyph::assess(&unicode);
+        iocs.record(matched.start(), IocKind::Domain, ascii, detail);
     }
 }
 
@@ -926,6 +958,54 @@ mod tests {
             .map(|ioc| ioc.value.as_str())
             .collect::<Vec<_>>();
         assert_eq!(domains, ["example.test", "tool.py"]);
+    }
+
+    #[test]
+    fn unicode_and_punycode_domains_are_normalized_and_assessed() {
+        // Cyrillic р and а in front of "ypal", and its Punycode spelling.
+        let report = extract(
+            "login at \u{0440}\u{0430}ypal.com or xn--ypal-43d9g.com, see münchen.de",
+            ExtractOptions::default(),
+        );
+        let domains = report
+            .iocs
+            .iter()
+            .filter(|ioc| ioc.kind == IocKind::Domain)
+            .map(|ioc| {
+                (
+                    ioc.value.as_str(),
+                    ioc.detail.as_deref().unwrap_or_default(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let lookalike = domains
+            .iter()
+            .find(|(value, _)| *value == "xn--ypal-43d9g.com")
+            .unwrap_or_else(|| panic!("{domains:?}"));
+        assert!(
+            lookalike.1.starts_with(crate::homoglyph::LOOKALIKE_PREFIX),
+            "{domains:?}"
+        );
+        assert!(lookalike.1.contains("reads as paypal.com"), "{domains:?}");
+        assert_eq!(
+            domains
+                .iter()
+                .filter(|(value, _)| value.starts_with("xn--ypal"))
+                .count(),
+            1,
+            "the Unicode and Punycode spellings are one IOC: {domains:?}"
+        );
+        assert!(
+            domains
+                .iter()
+                .any(|(value, detail)| *value == "xn--mnchen-3ya.de"
+                    && detail.starts_with("internationalized domain")),
+            "{domains:?}"
+        );
+        assert!(
+            !domains.iter().any(|(value, _)| *value == "nchen.de"),
+            "{domains:?}"
+        );
     }
 
     #[test]
