@@ -289,8 +289,17 @@ fn current_generated_text_binary_and_archive_reports_remain_compatible() {
     {
         let sample = workspace.0.join(format!("sample-{index}"));
         std::fs::write(&sample, bytes).unwrap();
-        let current =
-            serde_json::to_value(generate(&sample, Some(&rules), 100, 3, 100).unwrap()).unwrap();
+        let current = serde_json::to_value(
+            generate(
+                &sample,
+                Some(banshee::report::RuleSource::File(&rules)),
+                100,
+                3,
+                100,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         validate_compatibility(&current).unwrap();
         let saved = workspace.save("current.json", &current);
         std::fs::remove_file(&sample).unwrap();
@@ -429,7 +438,7 @@ fn verified_evidence_bundles_use_the_same_report_contract() {
         &sample,
         &bundle,
         banshee::evidence::CreateOptions {
-            rule_file: None,
+            rules: None,
             include_sample: false,
             max_entries: 100,
             max_depth: 3,

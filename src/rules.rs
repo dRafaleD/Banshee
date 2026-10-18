@@ -5,7 +5,16 @@ use anyhow::{Context, Result, bail};
 use regex::bytes::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
+pub mod sigma;
 pub mod yara;
+
+#[cfg(test)]
+mod builtin_tests;
+
+/// Starter rule pack compiled into the binary, used by `--builtin-rules`.
+pub const BUILTIN_RULES: &str = include_str!("data/builtin_rules.toml");
+/// Label reports show in place of a rule file path for the built-in pack.
+pub const BUILTIN_RULES_LABEL: &str = "builtin";
 
 const MAX_RULE_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_SCAN_BYTES: usize = 64 * 1024 * 1024;

@@ -84,8 +84,11 @@ pub fn analyze_with_source(
                 });
             }
         }
-        for raw_token in line.split_whitespace() {
+        let tokens = line.split_whitespace().flat_map(|raw_token| {
             let token = clean_token(raw_token);
+            std::iter::once(token).chain(assignment_value(token))
+        });
+        for token in tokens {
             if token.len() < 4 || token.len() > MAX_TOKEN_BYTES || !seen.insert(token.to_owned()) {
                 continue;
             }
@@ -332,6 +335,20 @@ fn extract_printable_strings(input: &[u8]) -> (String, usize) {
     (output, count)
 }
 
+/// The value of a `key=value` or `key:value` token, so that an encoded value
+/// is not hidden by its key. URLs (`scheme://`) are left whole.
+fn assignment_value(token: &str) -> Option<&str> {
+    let separator = token.find(['=', ':'])?;
+    let (key, rest) = token.split_at(separator);
+    let value = clean_token(&rest[1..]);
+    let key_like = (1..=64).contains(&key.len())
+        && key.starts_with(|character: char| character.is_ascii_alphabetic() || character == '_')
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
+    (key_like && value.len() >= 8 && !value.starts_with("//")).then_some(value)
+}
+
 fn clean_token(value: &str) -> &str {
     value.trim_matches(|character: char| {
         matches!(
@@ -358,6 +375,36 @@ mod tests {
         assert_eq!(report.analyses[0].line, Some(1));
         assert!(report.iocs.iocs.iter().any(|ioc| ioc.value == "8.8.8.8"));
         assert!(report.positions_available);
+    }
+
+    #[test]
+    fn decodes_encoded_values_of_key_value_tokens() {
+        let report = analyze(
+            "user=bob payload=JBSWY3DPEBLW64TMMQ====== data:aGVsbG8gd29ybGQ= https://x.example/a",
+            8,
+            100,
+        );
+        let finals: Vec<_> = report
+            .analyses
+            .iter()
+            .filter(|analysis| !analysis.report.layers.is_empty())
+            .map(|analysis| {
+                (
+                    analysis.token.as_str(),
+                    analysis.report.final_value.as_str(),
+                )
+            })
+            .collect();
+        assert!(
+            finals.contains(&("JBSWY3DPEBLW64TMMQ======", "Hello World")),
+            "{finals:?}"
+        );
+        assert!(
+            finals.contains(&("aGVsbG8gd29ybGQ=", "hello world")),
+            "{finals:?}"
+        );
+        assert!(super::assignment_value("https://x.example/a").is_none());
+        assert!(super::assignment_value("aGVsbG8=").is_none());
     }
 
     #[test]

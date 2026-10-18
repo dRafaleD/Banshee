@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod attack;
 pub mod banner;
 pub mod batch;
 pub mod cert;
@@ -12,10 +13,12 @@ pub mod file_inspect;
 pub mod fuzzy;
 pub mod hash;
 pub mod hexdump;
+pub mod homoglyph;
 mod i18n;
 pub mod input;
 pub mod ioc;
 pub mod jwt;
+pub mod known_good;
 pub mod output;
 pub mod recipe;
 pub mod regex_tool;
@@ -34,8 +37,10 @@ mod splash_boot;
 mod splash_portrait;
 pub mod strings;
 mod terminal;
+pub mod timeline;
 pub mod timestamp;
 mod tld;
+pub mod tlsh;
 pub mod watch;
 
 use std::io::IsTerminal as _;
@@ -282,6 +287,20 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             HashCommand::CompareSsdeep(args) => {
                 let score = fuzzy::compare(&args.left, &args.right)?;
                 output::write_line(&score.to_string())?;
+            }
+            HashCommand::Tlsh(args) => {
+                let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
+                let digest = tlsh::tlsh(&value).with_context(|| {
+                    format!(
+                        "no TLSH digest: input needs at least {} bytes and enough byte variety",
+                        tlsh::MIN_BYTES
+                    )
+                })?;
+                output::write_line(&digest)?;
+            }
+            HashCommand::CompareTlsh(args) => {
+                let distance = tlsh::distance(&args.left, &args.right)?;
+                output::write_line(&distance.to_string())?;
             }
             HashCommand::Identify(args) => {
                 let report = hash::identify(&args.value)?;
@@ -745,9 +764,49 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 }
                 report_conversion(&conversion, "Banshee TOML")?;
             }
+            RulesCommand::ImportSigma(args) => {
+                let conversion = rules::sigma::import_file(&args.path)?;
+                if conversion.converted == 0 {
+                    anyhow::bail!(
+                        "no Sigma rules could be converted: {}",
+                        conversion
+                            .skipped
+                            .iter()
+                            .map(|rule| format!("{}: {}", rule.rule, rule.reason))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    );
+                }
+                report_conversion(&conversion, "Banshee TOML")?;
+            }
+            RulesCommand::Builtin(args) => {
+                if args.list {
+                    let report = rules::validate_source(rules::BUILTIN_RULES)?;
+                    output::print_json_or(&report, args.json, |output| {
+                        writeln!(output, "Built-in rules: {}", report.rule_count)?;
+                        for rule in &report.rules {
+                            writeln!(output, "{}	{}	{}", rule.id, rule.severity, rule.description)?;
+                        }
+                        Ok(())
+                    })?;
+                } else {
+                    output::with_output(|output| {
+                        output.write_all(rules::BUILTIN_RULES.as_bytes())?;
+                        Ok(())
+                    })?;
+                }
+            }
             RulesCommand::Scan(args) => {
                 let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
-                let report = rules::scan(&args.rules, &value)?;
+                let report =
+                    match report::RuleSource::from_flags(args.rules.as_deref(), args.builtin_rules)
+                    {
+                        Some(report::RuleSource::File(path)) => rules::scan(path, &value)?,
+                        Some(report::RuleSource::Inline { source, .. }) => {
+                            rules::scan_source(source, &value)?
+                        }
+                        None => anyhow::bail!("rules scan needs --rules PATH or --builtin-rules"),
+                    };
                 has_findings |= report.matched_rules > 0;
                 output::print_json_or(&report, args.json, |output| {
                     writeln!(output, "Input bytes: {}", report.input_bytes)?;
@@ -860,7 +919,7 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         Command::Report(args) => {
             let report = report::generate(
                 &args.path,
-                args.rules.as_deref(),
+                report::RuleSource::from_flags(args.rules.as_deref(), args.builtin_rules),
                 args.max_entries,
                 args.max_depth,
                 args.max_tokens,
@@ -869,11 +928,20 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             report::print(&report, args.format)?;
         }
         Command::Scan(args) => {
+            let known_good = args
+                .known_good
+                .as_deref()
+                .map(known_good::KnownHashes::load)
+                .transpose()?;
             let report = scan::scan(
                 &args.path,
                 scan::ScanOptions {
                     recursive: args.recursive,
-                    rule_file: args.rules.as_deref(),
+                    known_good: known_good.as_ref(),
+                    rules: report::RuleSource::from_flags(
+                        args.rules.as_deref(),
+                        args.builtin_rules,
+                    ),
                     includes: &args.include,
                     excludes: &args.exclude,
                     max_files: args.max_files,
@@ -898,7 +966,10 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                     &args.path,
                     target,
                     evidence::CreateOptions {
-                        rule_file: args.rules.as_deref(),
+                        rules: report::RuleSource::from_flags(
+                            args.rules.as_deref(),
+                            args.builtin_rules,
+                        ),
                         include_sample: args.include_sample,
                         max_entries: args.max_entries,
                         max_depth: args.max_depth,
@@ -955,6 +1026,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         }
         Command::Export(args) => {
             output::with_output(|output| export::export(&args.input, args.format, output))?;
+        }
+        Command::Timeline(args) => {
+            let report = timeline::build(&args.paths, args.recursive, args.max_files)?;
+            has_operational_issues |= !report.errors.is_empty();
+            timeline::print(&report, args.format)?;
         }
         Command::Encode(args) => {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;

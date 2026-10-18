@@ -273,6 +273,9 @@ pub struct FileHashes {
     /// ssdeep fuzzy hash for similarity between related samples.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssdeep: Option<String>,
+    /// TLSH digest; omitted for inputs too short or uniform for one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tlsh: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -332,6 +335,10 @@ pub struct ReportFinding {
     pub kind: String,
     pub value: String,
     pub detail: String,
+    /// ATT&CK techniques declared by a rule or mapped from a heuristic
+    /// finding (see `attack.rs`); intent, not confirmed behavior.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attack: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -345,7 +352,7 @@ pub struct ReportSummary {
 
 pub fn generate(
     path: &Path,
-    rule_file: Option<&Path>,
+    rules: Option<RuleSource<'_>>,
     max_entries: usize,
     max_depth: u8,
     max_tokens: usize,
@@ -363,7 +370,7 @@ pub fn generate(
     generate_from_bytes(
         &bytes,
         &path.display().to_string(),
-        rule_file.map(RuleSource::File),
+        rules,
         max_entries,
         max_depth,
         max_tokens,
@@ -379,6 +386,41 @@ pub enum RuleSource<'a> {
         label: &'a str,
         source: &'a str,
     },
+}
+
+impl<'a> RuleSource<'a> {
+    /// The rule pack compiled into Banshee.
+    pub fn builtin() -> Self {
+        Self::Inline {
+            label: crate::rules::BUILTIN_RULES_LABEL,
+            source: crate::rules::BUILTIN_RULES,
+        }
+    }
+
+    /// Picks the built-in pack, a rule file, or no rules from CLI flags.
+    pub fn from_flags(file: Option<&'a Path>, builtin: bool) -> Option<Self> {
+        if builtin {
+            Some(Self::builtin())
+        } else {
+            file.map(Self::File)
+        }
+    }
+
+    /// The rule file path, or the inline label, as reports record it.
+    pub fn label(&self) -> String {
+        match self {
+            Self::File(path) => path.display().to_string(),
+            Self::Inline { label, .. } => (*label).to_owned(),
+        }
+    }
+
+    /// Checks that the rules compile, without scanning anything.
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::File(path) => crate::rules::validate_file(path).map(drop),
+            Self::Inline { source, .. } => crate::rules::validate_source(source).map(drop),
+        }
+    }
 }
 
 /// Builds a report for bytes already in memory, for example in a browser
@@ -400,6 +442,7 @@ pub fn generate_from_bytes(
         sha1: digest(bytes, HashAlgorithm::Sha1)?,
         sha256: file.sha256.clone(),
         ssdeep: Some(crate::fuzzy::ssdeep(bytes)),
+        tlsh: crate::tlsh::tlsh(bytes),
     };
     let mut content_report =
         crate::batch::analyze_bytes_with_source(bytes, max_depth, max_tokens, name);
@@ -481,9 +524,16 @@ fn collect_findings(
         kind: "file_property".to_owned(),
         value: file.path.clone(),
         detail: finding.clone(),
+        attack: Vec::new(),
     }));
     findings.extend(content.analyses.iter().map(content_finding));
     findings.extend(content.iocs.iocs.iter().map(ioc_finding));
+    for finding in &mut findings {
+        finding.attack = crate::attack::for_finding(&finding.detail);
+        if !finding.attack.is_empty() {
+            finding.detail = format!("{} [ATT&CK {}]", finding.detail, finding.attack.join(", "));
+        }
+    }
     if let Some(report) = &rules.report {
         findings.extend(report.matches.iter().map(rule_finding));
     }
@@ -509,27 +559,43 @@ fn content_finding(item: &TokenAnalysis) -> ReportFinding {
             },
             |line| format!("interesting token on line {line}"),
         ),
+        attack: Vec::new(),
     }
 }
 
 fn ioc_finding(ioc: &Ioc) -> ReportFinding {
+    let lookalike = ioc.kind == crate::ioc::IocKind::Domain
+        && ioc
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.starts_with(crate::homoglyph::LOOKALIKE_PREFIX));
+    let note = match (&ioc.detail, ioc.kind) {
+        (Some(detail), crate::ioc::IocKind::Domain) => format!("{detail}; "),
+        _ => String::new(),
+    };
     ReportFinding {
         source: FindingSource::IocExtraction,
-        severity: Severity::Info,
+        severity: if lookalike {
+            Severity::Medium
+        } else {
+            Severity::Info
+        },
         kind: ioc.kind.to_string(),
         value: ioc.value.clone(),
-        detail: match (ioc.first_line, ioc.last_line) {
-            (Some(first), Some(last)) => format!(
-                "{} occurrence{}; lines {first}-{last}",
-                ioc.occurrences,
-                if ioc.occurrences == 1 { "" } else { "s" },
-            ),
-            _ => format!(
-                "{} occurrence{}; source position unavailable",
-                ioc.occurrences,
-                if ioc.occurrences == 1 { "" } else { "s" },
-            ),
-        },
+        detail: note
+            + &match (ioc.first_line, ioc.last_line) {
+                (Some(first), Some(last)) => format!(
+                    "{} occurrence{}; lines {first}-{last}",
+                    ioc.occurrences,
+                    if ioc.occurrences == 1 { "" } else { "s" },
+                ),
+                _ => format!(
+                    "{} occurrence{}; source position unavailable",
+                    ioc.occurrences,
+                    if ioc.occurrences == 1 { "" } else { "s" },
+                ),
+            },
+        attack: Vec::new(),
     }
 }
 
@@ -551,6 +617,7 @@ fn rule_finding(rule: &RuleMatchReport) -> ReportFinding {
                 format!("{detail} [ATT&CK {}]", rule.attack.join(", "))
             }
         },
+        attack: rule.attack.clone(),
     }
 }
 
@@ -591,6 +658,9 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
     writeln!(output, "SHA-256: {}", report.hashes.sha256)?;
     if let Some(ssdeep) = &report.hashes.ssdeep {
         writeln!(output, "ssdeep: {ssdeep}")?;
+    }
+    if let Some(tlsh) = &report.hashes.tlsh {
+        writeln!(output, "TLSH: {tlsh}")?;
     }
     if let Some(compression) = &report.file.compression {
         writeln!(
@@ -751,6 +821,9 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
     writeln!(output, "- SHA-256: `{}`", report.hashes.sha256)?;
     if let Some(ssdeep) = &report.hashes.ssdeep {
         writeln!(output, "- ssdeep: `{ssdeep}`")?;
+    }
+    if let Some(tlsh) = &report.hashes.tlsh {
+        writeln!(output, "- TLSH: `{tlsh}`")?;
     }
     writeln!(output)?;
     if let Some(compression) = &report.file.compression {

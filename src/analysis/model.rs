@@ -4,6 +4,7 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub enum EncodingKind {
     Base64,
+    Base32,
     Hex,
     UrlEncoding,
     HtmlEntity,
@@ -23,6 +24,7 @@ impl std::fmt::Display for EncodingKind {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
             Self::Base64 => "Base64",
+            Self::Base32 => "Base32",
             Self::Hex => "Hex",
             Self::UrlEncoding => "URL encoding",
             Self::HtmlEntity => "HTML entity",

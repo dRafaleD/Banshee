@@ -75,8 +75,11 @@ const CATEGORIES: &[Category] = &[
         key_tr: "vaka",
         title: "CASE WORK",
         title_tr: "VAKA ÇALIŞMASI",
-        commands: &["evidence", "diff", "export"],
-        examples: &["evidence verify case-evidence"],
+        commands: &["evidence", "diff", "export", "timeline"],
+        examples: &[
+            "evidence verify case-evidence",
+            "timeline ./case-files --recursive",
+        ],
     },
     Category {
         key: "system",
@@ -208,6 +211,9 @@ fn describe_turkish(name: &str) -> &'static str {
         "evidence" => "Deterministik çevrimdışı kanıt paketi oluştur veya doğrula",
         "diff" => "İki rapor JSON'unu veya doğrulanmış kanıt paketini karşılaştır",
         "export" => "Kayıtlı rapor gözlemlerini STIX 2.1, MISP veya CSV olarak dışa aktar",
+        "timeline" => {
+            "Yerel dosyalardaki zaman damgalarını sıralı bir vaka zaman çizelgesinde birleştir"
+        }
         "doctor" => "Yerel kurulumu çevrimdışı kontrol et (kodekler, veri, PATH, geçici dizin)",
         "banner" => "Banshee ASCII afişini ve maske amblemini yazdır",
         "completions" => "Kabuk tamamlama tanımları üret",

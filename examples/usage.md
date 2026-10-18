@@ -83,6 +83,11 @@ banshee file inspect Installer.dll        # .NET assembly, P/Invokes, Authentico
 banshee file inspect update.ps1           # download cradles, AMSI tampering, LOLBins
 banshee file inspect invoice.eml          # sender spoofing, attachments, links
 banshee file inspect delivery.iso         # files inside, shortcuts and executables flagged
+banshee file inspect Security.evtx        # event IDs, providers, time range, log clearing, CRC/ID gaps
+banshee file inspect capture.pcapng       # conversations, ports, DNS names, HTTP hosts, TLS SNI
+banshee file inspect invoice.one          # embedded files typed and hashed, lure payloads flagged
+banshee file inspect crash.dmp            # minidump modules, threads, exception; lsass dumps flagged
+banshee report Security.evtx --format json # event data strings feed IOC extraction
 banshee rules import-yara library.yar --output library.toml   # wide, filesize, proximity
 # PE certificate-table presence is metadata only; signature trust is not verified.
 banshee report suspicious.exe
@@ -97,18 +102,26 @@ banshee evidence create suspicious.bin --include-sample --output full-evidence
 banshee diff baseline-report.json current-report.json
 banshee hash ssdeep --file suspicious.bin
 banshee hash compare-ssdeep "96:abc...:def..." "96:abd...:def..."   # prints 0-100
+banshee hash tlsh --file suspicious.bin                 # T1... digest, inputs of 50+ bytes
+banshee hash compare-tlsh T1A231... T11931...           # distance, 0 = identical
 banshee diff baseline-evidence current-evidence --json
 banshee export report.json --format stix --output observables.stix.json
 banshee export case-evidence --format misp --output event.misp.json
 banshee export report.json --format csv
+banshee timeline ./case-files --recursive         # file, PE, email, LNK, EVTX, pcap and dump times
+banshee timeline mail.eml dump.dmp --format csv
 banshee scan ./samples
 banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --max-file-size 32MiB --max-total-size 512MiB
 banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
 banshee scan ./samples --recursive --jobs 1   # sequential; output is identical
 banshee rules validate examples/rules.toml
+banshee rules builtin --list                       # the starter pack compiled into Banshee
+banshee rules scan --builtin-rules --file update.ps1
+banshee report suspicious.ps1 --builtin-rules --format markdown
 banshee rules export-yara examples/rules.toml --output banshee.yar
 banshee rules import-yara community.yar --output imported.toml
+banshee rules import-sigma proc_creation_win_susp.yml --output sigma.toml   # field names ignored
 banshee rules validate examples/rules.toml --json
 cat suspicious.log | banshee rules scan --rules examples/rules.toml
 banshee rules scan --rules examples/rules.toml --file payload.bin --fail-on-findings

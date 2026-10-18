@@ -241,6 +241,59 @@ mod tests {
         assert_eq!(report.final_value, "banshee");
     }
 
+    #[test]
+    fn decodes_padded_unpadded_and_lowercase_base32() {
+        for encoded in [
+            "JBSWY3DPEBLW64TMMQ======",
+            "JBSWY3DPEBLW64TMMQ",
+            "jbswy3dpeblw64tmmq",
+            "JBSW Y3DP EBLW 64TM MQ",
+        ] {
+            let report = Analyzer::new(8).analyze(encoded);
+            assert_eq!(report.layers.len(), 1, "{encoded}");
+            assert_eq!(report.layers[0].kind, EncodingKind::Base32, "{encoded}");
+            assert_eq!(report.final_value, "Hello World", "{encoded}");
+        }
+    }
+
+    #[test]
+    fn decodes_base32_wrapped_base64_and_gzip() {
+        let nested = crate::codec::encode_bytes(b"aGVsbG8gd29ybGQ=", crate::codec::Codec::Base32)
+            .expect("encode");
+        let report = Analyzer::new(8).analyze(&nested);
+        assert_eq!(report.layers[0].kind, EncodingKind::Base32);
+        assert_eq!(report.layers[1].kind, EncodingKind::Base64);
+        assert_eq!(report.final_value, "hello world");
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"banshee").expect("compress");
+        let compressed = encoder.finish().expect("finish gzip");
+        let encoded =
+            crate::codec::encode_bytes(&compressed, crate::codec::Codec::Base32).expect("encode");
+        let report = Analyzer::new(8).analyze(&encoded);
+        assert_eq!(report.layers[0].kind, EncodingKind::Base32);
+        assert_eq!(report.layers[1].kind, EncodingKind::Gzip);
+        assert_eq!(report.final_value, "banshee");
+    }
+
+    #[test]
+    fn base32_alphabet_words_and_mixed_case_are_not_base32() {
+        for value in [
+            "HELLOWORLDTHISISATEST",
+            "DEADBEEFCAFEBABE",
+            "JbSwY3DpEbLw64TmMq",
+        ] {
+            let report = Analyzer::new(8).analyze(value);
+            assert!(
+                report
+                    .layers
+                    .iter()
+                    .all(|layer| layer.kind != EncodingKind::Base32),
+                "{value}"
+            );
+        }
+    }
+
     fn utf16le(value: &str) -> Vec<u8> {
         value.encode_utf16().flat_map(u16::to_le_bytes).collect()
     }

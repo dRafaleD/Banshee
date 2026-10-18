@@ -26,7 +26,9 @@ pub enum ScanFormat {
 #[derive(Debug, Clone, Copy)]
 pub struct ScanOptions<'a> {
     pub recursive: bool,
-    pub rule_file: Option<&'a Path>,
+    pub rules: Option<crate::report::RuleSource<'a>>,
+    /// Files whose digest is listed are reported as known-good, not analyzed.
+    pub known_good: Option<&'a crate::known_good::KnownHashes>,
     pub includes: &'a [String],
     pub excludes: &'a [String],
     pub max_files: usize,
@@ -75,6 +77,8 @@ pub struct ScanFilters {
 #[serde(rename_all = "snake_case")]
 pub enum FileScanStatus {
     Analyzed,
+    /// The digest is on the `--known-good` list, so the file was not analyzed.
+    KnownGood,
     Skipped,
     Unreadable,
     Unsupported,
@@ -85,6 +89,7 @@ impl std::fmt::Display for FileScanStatus {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Analyzed => "analyzed",
+            Self::KnownGood => "known_good",
             Self::Skipped => "skipped",
             Self::Unreadable => "unreadable",
             Self::Unsupported => "unsupported",
@@ -109,6 +114,7 @@ pub struct FileScanResult {
 pub struct ScanSummary {
     pub discovered_files: usize,
     pub analyzed: usize,
+    pub known_good: usize,
     pub skipped: usize,
     pub unreadable: usize,
     pub unsupported: usize,
@@ -143,8 +149,8 @@ enum DiscoveredKind {
 
 pub fn scan(root: &Path, options: ScanOptions<'_>) -> Result<DirectoryScanReport> {
     let filters = CompiledFilters::new(options.includes, options.excludes)?;
-    if let Some(rule_file) = options.rule_file {
-        crate::rules::validate_file(rule_file)?;
+    if let Some(rules) = options.rules {
+        rules.validate()?;
     }
 
     let traversal_limit = options
@@ -259,6 +265,7 @@ pub fn scan(root: &Path, options: ScanOptions<'_>) -> Result<DirectoryScanReport
                     .as_ref()
                     .map_or(0, |report| report.summary.total_findings);
             }
+            FileScanStatus::KnownGood => summary.known_good += 1,
             FileScanStatus::Skipped => summary.skipped += 1,
             FileScanStatus::Unreadable => summary.unreadable += 1,
             FileScanStatus::Unsupported => summary.unsupported += 1,
@@ -494,9 +501,32 @@ fn analyze_file(
     size: u64,
     options: &ScanOptions<'_>,
 ) -> FileScanResult {
+    if let Some(known) = options.known_good {
+        // Hashing is far cheaper than analysis, so listed files skip it.
+        match crate::input::read_regular_file_limited(path, options.max_file_size, "scan input") {
+            Ok(bytes) => {
+                if let Some(algorithm) = known.matches(&bytes) {
+                    return result(
+                        relative,
+                        FileScanStatus::KnownGood,
+                        Some(format!("{algorithm} digest is on the known-good list")),
+                        Some(size),
+                    );
+                }
+            }
+            Err(error) => {
+                return result(
+                    relative,
+                    FileScanStatus::Unreadable,
+                    Some(format!("{error:#}")),
+                    Some(size),
+                );
+            }
+        }
+    }
     match crate::report::generate(
         path,
-        options.rule_file,
+        options.rules,
         options.max_entries,
         options.max_depth,
         options.max_tokens,
@@ -694,6 +724,13 @@ fn write_text(output: &mut dyn Write, report: &DirectoryScanReport) -> Result<()
         report.summary.bytes_analyzed,
         report.summary.total_findings
     )?;
+    if report.summary.known_good > 0 {
+        writeln!(
+            output,
+            "Known-good: {} file(s) matched the hash list and were not analyzed",
+            report.summary.known_good
+        )?;
+    }
     if report.summary.file_limit_reached {
         writeln!(
             output,

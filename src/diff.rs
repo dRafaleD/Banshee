@@ -103,6 +103,9 @@ pub struct AnalysisDiff {
     /// ssdeep similarity from 0 to 100; omitted when either report lacks ssdeep.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssdeep_similarity: Option<u8>,
+    /// TLSH distance (0 = identical); omitted when either report lacks TLSH.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tlsh_distance: Option<u32>,
     pub iocs: CollectionDiff,
     pub findings: CollectionDiff,
     pub rule_matches: CollectionDiff,
@@ -144,6 +147,7 @@ pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
         ("hash.sha1", "/hashes/sha1"),
         ("hash.sha256", "/hashes/sha256"),
         ("hash.ssdeep", "/hashes/ssdeep"),
+        ("hash.tlsh", "/hashes/tlsh"),
         ("file.executable.imphash", "/file/executable/imphash"),
         ("file.format", "/file/format"),
         ("file.size", "/file/size"),
@@ -299,6 +303,13 @@ pub fn compare(left: &Path, right: &Path) -> Result<AnalysisDiff> {
             (Some(left), Some(right)) => crate::fuzzy::compare(left, right).ok(),
             _ => None,
         },
+        tlsh_distance: match (
+            left.value.pointer("/hashes/tlsh").and_then(Value::as_str),
+            right.value.pointer("/hashes/tlsh").and_then(Value::as_str),
+        ) {
+            (Some(left), Some(right)) => crate::tlsh::distance(left, right).ok(),
+            _ => None,
+        },
         iocs,
         findings,
         rule_matches,
@@ -350,6 +361,9 @@ fn write_text(output: &mut dyn Write, report: &AnalysisDiff) -> std::io::Result<
     }
     if let Some(similarity) = report.ssdeep_similarity {
         writeln!(output, "ssdeep similarity: {similarity}/100")?;
+    }
+    if let Some(distance) = report.tlsh_distance {
+        writeln!(output, "TLSH distance: {distance} (0 = identical)")?;
     }
     write_collection(output, "IOCs", &report.iocs)?;
     write_collection(output, "Findings", &report.findings)?;

@@ -15,6 +15,7 @@ Analysis runs locally without uploading your inputs.
 
 [Quick start](#quick-guide) · [Capabilities](#choose-a-workflow) ·
 [Install](#build) · [Command examples](examples/usage.md) ·
+[Walkthrough](docs/WALKTHROUGH.md) · [Türkçe](README.tr.md) ·
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 Development guides: [installation](docs/INSTALLATION.md),
@@ -34,10 +35,10 @@ Development guides: [installation](docs/INSTALLATION.md),
 | --- | --- | --- |
 | Understand an unknown value | `whatis`, `entropy`, `recipe` | Decoding layers and explainable signals |
 | Collect indicators from logs | `extract`, `analyze`, `watch` | Normalized IOCs, bounded context, masked secret candidates |
-| Inspect local artifacts | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Structural metadata for archives, disk images, PE/ELF/Mach-O and .NET executables, Authenticode signers, Office, RTF, PDF, LNK, email and script files, plus strings and hex views |
+| Inspect local artifacts | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Structural metadata for archives, disk images, PE/ELF/Mach-O and .NET executables, Authenticode signers, Office, RTF, PDF, LNK, OneNote, email, script, EVTX event log, minidump and pcap/pcapng capture files, plus strings and hex views |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
-| Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
+| Preserve and compare results | `evidence`, `diff`, `timeline` | Hash-checked bundles, saved-report differences and sorted case timelines |
 | Share observables with other tools | `export` | STIX 2.1, MISP event JSON or CSV |
 | Work interactively | `banshee`, `shell` | A `banshee>` console with categorized help and Tab completion |
 | Check your installation | `doctor` | Offline report on codecs, bundled data, PATH and temp directory |
@@ -142,7 +143,7 @@ target/release/banshee export case-evidence --format stix --output observables.s
 
 ### What it can help with
 
-- Decode layered Base64, hexadecimal, URL/HTML encoding, compression, and recipes.
+- Decode layered Base64, Base32, hexadecimal, URL/HTML encoding, compression, and recipes.
 - Extract and normalize URLs, domains, IP addresses, hashes, emails, and other IOCs.
 - Track IOC source, line, column, and bounded optional context.
 - Detect common credential and private-key markers with safe default redaction.
@@ -163,9 +164,11 @@ target/release/banshee export case-evidence --format stix --output observables.s
 
 The initial foundation includes the following commands:
 
-- Detects Base64, hexadecimal, URL encoding, and HTML entities.
+- Detects Base64, Base32 (padded or not, either letter case), hexadecimal, URL
+  encoding, and HTML entities. In `analyze`, `extract` and reports, the value
+  of a `key=value` or `key:value` token is decoded too.
 - Recursively decodes nested layers with depth and size limits.
-- Detects Base64/Hex-wrapped gzip and zlib layers with a 16 MiB decompression limit.
+- Detects Base64/Base32/Hex-wrapped gzip and zlib layers with a 16 MiB decompression limit.
 - Unwraps UTF-16LE text (for example PowerShell `-EncodedCommand`) and
   heuristic single-byte and repeating-key XOR layers inside Base64/Hex
   payloads; XOR keys are reported and never treated as certain.
@@ -176,12 +179,18 @@ The initial foundation includes the following commands:
 - Measures Shannon entropy and gives an explainable triage score.
 - Inspects JWT headers and payloads without claiming signature verification.
 - Extracts and normalizes defanged URLs, domains, IPv4/IPv6, hashes, emails, and MAC addresses.
+- Records internationalized domains in Punycode and flags lookalikes: names
+  that mix Latin with Cyrillic, Greek or Armenian letters, or that read as an
+  ASCII name (`раypal.com` with Cyrillic letters reads as `paypal.com`).
+  Reports list them as medium-severity findings.
 - Records bounded source locations and optional surrounding-line context for text IOCs.
 - Detects common cloud access-key, GitHub/Slack-style token, bearer-token,
   credential-assignment, database-URI password, and private-key candidates.
 - Calculates and identifies MD5, NTLM, and SHA-family hashes; supports offline wordlists.
-- Computes and compares ssdeep fuzzy hashes; `diff` reports how similar two
-  samples are, which helps spot variants of the same file.
+- Computes and compares ssdeep and TLSH fuzzy hashes; `diff` reports how
+  similar two samples are, which helps spot variants of the same file. TLSH
+  digests (`T1…`) match the reference implementation, so they can be compared
+  with digests from other tools and services.
 - Converts Unix timestamps (s/ms/us/ns) and RFC3339 date-times.
 - Tests regular expressions and provides common security patterns.
 - Inspects local PEM/DER X.509 certificates, fingerprints, key sizes, constraints, KU/EKU, and SANs.
@@ -379,7 +388,7 @@ banshee cert inspect certificate.pem
 # Produce machine-readable output for a pipeline.
 banshee analyze --format json --file suspicious.bin
 
-# Save a unified report; add --rules to include local rule matches.
+# Save a unified report; add --rules FILE or --builtin-rules for rule matches.
 banshee report suspicious.bin --format json --output report.json
 banshee report suspicious.bin --rules examples/rules.toml --format markdown --output report.md
 
@@ -387,6 +396,8 @@ banshee report suspicious.bin --rules examples/rules.toml --format markdown --ou
 banshee scan ./samples
 banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
+# Skip files on a known-good list (plain digests, sha256sum output or NSRL CSV).
+banshee scan C:/Windows/System32 --known-good baseline-sha256.txt --format jsonl
 
 # SARIF 2.1.0 for code-scanning tools such as GitHub code scanning. Rule IDs
 # name the finding source and kind; levels follow the finding severity.
@@ -476,6 +487,9 @@ cargo build --release --locked
   symbolic links. It defaults to 10,000 considered regular files, 64 MiB per
   file, and 1 GiB total analyzed bytes; all limits can be lowered explicitly.
   Skipped, unreadable, unsupported, and failed entries remain distinct.
+  With `--known-good`, files whose MD5, SHA-1 or SHA-256 digest is listed are
+  hashed but not analyzed and get the `known_good` status. The list is
+  trusted as given, so only use lists you control.
 - A scan that preserves partial results but encounters unreadable or failed
   files returns status `2`. A complete scan uses the ordinary success or
   `--fail-on-findings` status behavior.
@@ -579,6 +593,29 @@ pattern = "cmd.exe"
 case_insensitive = true
 ```
 
+### Built-in rule pack
+
+`--builtin-rules` applies a starter pack of about 35 rules compiled into
+Banshee, so `rules scan`, `report`, `scan` and `evidence create` work without a
+rule file. The pack covers PowerShell cradles and encoded commands, LOLBin
+downloads (certutil, mshta, regsvr32, rundll32, bitsadmin), shadow-copy
+deletion and other ransomware preparation, Defender tampering, Mimikatz and
+LSASS dumping, VBA/VBScript/JScript execution, PHP/JSP/ASPX web shells, Unix
+reverse shells, and webhook, bot-API, paste-site and onion addresses. Every
+rule carries a category, a confidence and ATT&CK IDs.
+
+```bash
+banshee rules builtin --list                 # IDs, severities, descriptions
+banshee rules builtin > my-rules.toml        # start your own pack from it
+banshee report suspicious.ps1 --builtin-rules
+banshee scan ./samples --recursive --builtin-rules --format jsonl
+```
+
+Reports record the rule source as `builtin`. Several of these commands are
+also used by administrators and installers, so low-confidence matches in
+particular need review. `--builtin-rules` and `--rules` cannot be combined;
+to extend the pack, print it and add your rules to the copy.
+
 ### YARA interoperability
 
 `banshee rules export-yara RULES.toml` writes YARA rules; anything YARA cannot
@@ -593,6 +630,22 @@ PE/ELF/ZIP/gzip magic checks and `math.entropy` bounds. Modifiers such as
 being approximated. All 60 rules of the AsphDex YARA library convert, and the
 converted rules give the same results as YARA on its 520 positive, negative
 and limitation fixtures and its benign corpus.
+
+### Sigma import
+
+`banshee rules import-sigma rules.yml` converts Sigma rules into Banshee TOML.
+Sigma matches fields of parsed log events, while Banshee matches content, so
+field names are ignored and each field's values are searched anywhere in the
+scanned text. Converted rules are therefore broader than the originals; use
+them on exported logs, scripts and command lines, and review matches. The
+import supports `contains`, `startswith`, `endswith`, `all`, `re`, `cased`
+and `windash`, `*` and `?` wildcards, keyword lists, and conditions built from
+`and`, `or`, parentheses, `1 of` and `all of` (each `or` branch becomes its own
+rule). `not`, aggregations, `timeframe`, `base64`/`base64offset`, `cidr`, null
+checks and numeric comparisons skip the rule with a reason. Levels map to
+severities, `status` to confidence, `attack.tNNNN` tags to ATT&CK IDs, and the
+log source to the category. The YAML reader covers the subset Sigma uses and
+needs no extra dependency.
 
 `category`, `confidence` (`low`, `medium`, or `high`), `references`, and
 `attack` are reporting metadata only. `attack` accepts up to 16 unique MITRE
@@ -621,6 +674,10 @@ by `rules validate` and `rules scan`.
 - Rule confidence, references and ATT&CK identifiers are author-supplied
   metadata, not validation of a claim or observed behavior. Banshee never
   fetches rule references.
+- Report findings from file inspection and IOC extraction carry ATT&CK
+  identifiers only where the finding clearly suggests a technique (for
+  example a remote template, a double extension, a cleared event log or a
+  lookalike domain). The table lives in `src/attack.rs`.
 - Evidence bundles omit the source sample by default. `--include-sample` is an
   explicit opt-in that copies it as `source-sample.bin`; protect and share such
   bundles according to the sensitivity of the original data.

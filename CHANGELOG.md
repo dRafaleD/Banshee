@@ -5,6 +5,97 @@ changes must be called out explicitly. Tags are immutable.
 
 ## Unreleased
 
+### Added
+
+- A built-in starter rule pack of 35 rules (PowerShell, LOLBins, ransomware
+  preparation, Defender tampering, credential dumping, Office scripts, web
+  shells, Unix reverse shells, web-service C2 and UPX), each with category,
+  confidence and ATT&CK IDs. `--builtin-rules` applies it in `rules scan`,
+  `report`, `scan` and `evidence create`; `rules builtin` prints it as TOML
+  or lists it with `--list`.
+- `file inspect` reads Windows event logs (EVTX): record count, record ID
+  and time range, event ID, provider and channel counts, noteworthy events
+  (log cleared, service installed, account and group changes, Defender
+  detections), CRC32 mismatches and missing record IDs. String values from
+  event data feed IOC extraction in `report`, `scan` and `evidence`. Counts
+  match `Get-WinEvent` on exported Application, System and PowerShell logs.
+- `file inspect` reads OneNote sections (`.one`): every embedded file is
+  listed with its content type, size and SHA-256, and executables, scripts,
+  shortcuts, archives and OLE files are flagged as lure payloads. Script text
+  feeds IOC extraction. Embedded file names are not decoded. Tested against
+  the MS-ONESTORE structure with synthetic files only.
+- `file inspect` reads packet captures (pcap and pcapng, including
+  nanosecond timestamps): link types, packet and byte counts, time range, top
+  conversations and service ports, DNS question names, HTTP hosts and URLs,
+  and TLS ClientHello server names. Cleartext HTTP requests to an IP address
+  are flagged. Names and addresses feed IOC extraction. Streams are not
+  reassembled. Tested with synthetic captures only.
+- `file inspect` reads Windows minidumps (`MDMP`): dump time and type,
+  processor and Windows version, process ID, threads, loaded modules with
+  the main module, captured memory and the exception record. A dump of
+  `lsass.exe` is flagged as a credential-theft artifact. Checked against
+  real Windows Error Reporting crash dumps.
+- `rules import-sigma` converts Sigma rules into content-matching Banshee
+  TOML: values of every field are searched anywhere in the content (field
+  names are ignored), `or` and `1 of` branches become separate rules, and
+  constructs without a content equivalent (`not`, aggregations, `timeframe`,
+  `base64`, `cidr`, null checks) skip the rule with a reason. Levels, status,
+  ATT&CK tags, references and the log source carry over as metadata. Tested
+  with hand-written rules; not yet run against the SigmaHQ repository.
+- `timeline PATH...` merges timestamps from local files into one sorted
+  timeline (text, JSON or CSV): file modification times, PE build stamps,
+  email Date headers, shortcut target times, event log and capture ranges
+  and minidump times. Each event names its source; embedded times can be
+  forged.
+- `file inspect` lists the target created, accessed and modified times that
+  a Windows shortcut (LNK) header records.
+- `scan --known-good LIST` skips files whose MD5, SHA-1 or SHA-256 digest is
+  in a local list (plain digests, `sha256sum` output or NSRL-style CSV). Such
+  files get the `known_good` status and a `summary.known_good` count instead
+  of being analyzed.
+- TLSH fuzzy hashes: `hash tlsh` and `hash compare-tlsh`, a `tlsh` field in
+  report hashes (omitted for inputs under 50 bytes or too uniform), and
+  `tlsh_distance` in `diff`. Digests and distances match py-tlsh 5.0.0.
+- IOC extraction finds domains written with non-ASCII letters and records
+  them in Punycode; Punycode domains are decoded for review. Domains that mix
+  Latin with Cyrillic, Greek or Armenian letters, or read as an ASCII name,
+  carry a "possible homoglyph" detail and are medium-severity report findings.
+- Report findings have an optional `attack` list. Rule findings copy their
+  rule's techniques; heuristic findings with a clear technique (script
+  patterns, remote templates, Equation Editor objects, double extensions,
+  Reply-To mismatches, hidden files, packers, cleared event logs, lookalike
+  domains) are mapped from a table and also end their detail with
+  `[ATT&CK …]`. HTML coverage counts all findings, and SARIF results carry
+  `attack/<id>` tags.
+- Documentation: `docs/WALKTHROUGH.md` follows a harmless phishing email
+  from inspection to evidence, diff and STIX export, and `README.tr.md` is a
+  Turkish guide. Release archives include both.
+
+### Changed
+
+- `whatis` and content analysis detect and decode Base32 (padded or
+  unpadded, upper or lower case), including Base32-wrapped Base64, gzip and
+  zlib. Mixed-case text and Base32-alphabet words that do not decode to text
+  are not treated as Base32.
+- `analyze`, `extract` and reports also decode the value of `key=value` and
+  `key:value` tokens, so `payload=<Base64>` is no longer missed.
+- Library API: `report::generate`, `scan::ScanOptions` and
+  `evidence::CreateOptions` take a `report::RuleSource` (`rules`) instead of a
+  rule file path (`rule_file`). Report and bundle JSON are unchanged.
+- `extract` text output ends domain lines with `note=` when the domain is
+  internationalized or a possible homoglyph. Earlier fields keep their order.
+
+### Fixed
+
+- Whole files and documents (256 bytes or more) are classified as
+  high-entropy only from 7.2 bits per byte, and their suspicion score counts
+  only entropy above 6 bits per byte. Ordinary text and executables were
+  reported as "possibly random or encrypted" with a high score. Short tokens
+  keep the previous thresholds.
+- Hex detection needs at least 8 digits, and digit-only values at least 16,
+  so years, invoice and phone numbers (`4471` decodes to `Dq`) are no longer
+  reported as Hex layers.
+
 ## 0.3.1 — 2026-10-16
 
 ### Changed

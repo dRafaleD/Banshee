@@ -116,7 +116,7 @@ pub fn analyze_bytes(bytes: &[u8]) -> EntropyReport {
     let unique_bytes = bytes.iter().copied().collect::<HashSet<_>>().len();
     let bits_per_byte = shannon_entropy(bytes);
     let normalized_entropy = (bits_per_byte / 8.0).clamp(0.0, 1.0);
-    let classification = if byte_length >= 32 && bits_per_byte >= 4.5 {
+    let classification = if is_high_entropy(bits_per_byte, byte_length) {
         Classification::HighEntropy
     } else {
         Classification::PlainText
@@ -182,14 +182,37 @@ fn classify(bits_per_byte: f64, length: usize, analysis: &super::AnalysisReport)
     if !analysis.layers.is_empty() {
         return Classification::Encoded;
     }
-    if length >= 32 && bits_per_byte >= 4.5 {
+    if is_high_entropy(bits_per_byte, length) {
         return Classification::HighEntropy;
     }
     Classification::PlainText
 }
 
+/// Inputs at least this long are judged as documents or files rather than
+/// single tokens: ordinary text and executables reach 4.5-6.5 bits per
+/// byte there, while compressed or encrypted data comes close to 8.
+const DOCUMENT_BYTES: usize = 256;
+
+fn is_high_entropy(bits_per_byte: f64, length: usize) -> bool {
+    if length >= DOCUMENT_BYTES {
+        bits_per_byte >= 7.2
+    } else {
+        length >= 32 && bits_per_byte >= 4.5
+    }
+}
+
 fn score(bits_per_byte: f64, length: usize, classification: Classification) -> u8 {
-    let entropy_component = (bits_per_byte / 8.0 * 60.0).round() as u8;
+    let document = length >= DOCUMENT_BYTES
+        && matches!(
+            classification,
+            Classification::PlainText | Classification::HighEntropy
+        );
+    let entropy_component = if document {
+        // Only entropy above typical text and code counts for whole files.
+        ((bits_per_byte - 6.0).max(0.0) / 2.0 * 60.0).round() as u8
+    } else {
+        (bits_per_byte / 8.0 * 60.0).round() as u8
+    };
     let length_component = (length.min(64) as f64 / 64.0 * 10.0).round() as u8;
     let classification_component = match classification {
         Classification::PlainText => 0,
@@ -222,6 +245,30 @@ mod tests {
         let report = analyze("aGVsbG8gd29ybGQ=");
         assert_eq!(report.classification, Classification::Encoded);
         assert!(report.suspicion_score >= 20);
+    }
+
+    #[test]
+    fn ordinary_documents_are_not_high_entropy_but_random_data_is() {
+        let text = "Invoice 4471 is overdue. Please review it today and reply to \
+                    the accounts team if the amount or the due date looks wrong. "
+            .repeat(4);
+        let report = analyze(&text);
+        assert!(report.bits_per_byte > 4.0, "{}", report.bits_per_byte);
+        assert_eq!(report.classification, Classification::PlainText);
+        assert_eq!(report.suspicion_level, SuspicionLevel::Low);
+
+        let mut state = 0x2545_f491_u32;
+        let random: Vec<u8> = (0..4096)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        let report = super::analyze_bytes(&random);
+        assert_eq!(report.classification, Classification::HighEntropy);
+        assert_eq!(report.suspicion_level, SuspicionLevel::High);
     }
 
     #[test]

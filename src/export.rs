@@ -465,7 +465,7 @@ fn write_csv(output: &mut dyn Write, data: &ExportData) -> Result<()> {
 }
 
 /// Quotes CSV fields and neutralizes spreadsheet formula prefixes.
-fn csv_field(value: &str) -> String {
+pub(crate) fn csv_field(value: &str) -> String {
     let guarded = if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
         format!("'{value}")
     } else {

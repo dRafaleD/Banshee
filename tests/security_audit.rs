@@ -482,4 +482,39 @@ fn ssdeep_digests_compare_related_samples_and_appear_in_diffs() {
         .unwrap();
     let diff: serde_json::Value = serde_json::from_slice(&diff.stdout).unwrap();
     assert_eq!(diff["ssdeep_similarity"].as_u64(), Some(u64::from(score)));
+
+    let tlsh = |path: &std::path::Path| {
+        let output = Command::cargo_bin("banshee")
+            .unwrap()
+            .args(["hash", "tlsh", "--file"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let (left_tlsh, right_tlsh) = (tlsh(&left), tlsh(&right));
+    assert!(
+        left_tlsh.starts_with("T1") && left_tlsh.len() == 72,
+        "{left_tlsh}"
+    );
+    let compared = Command::cargo_bin("banshee")
+        .unwrap()
+        .args(["hash", "compare-tlsh", &left_tlsh, &right_tlsh])
+        .output()
+        .unwrap();
+    let distance: u64 = String::from_utf8(compared.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(distance < 50, "distance {distance}");
+    assert_eq!(diff["tlsh_distance"].as_u64(), Some(distance));
+
+    Command::cargo_bin("banshee")
+        .unwrap()
+        .args(["hash", "tlsh", "too short"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("at least 50 bytes"));
 }

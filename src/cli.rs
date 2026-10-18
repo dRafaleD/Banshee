@@ -186,6 +186,8 @@ pub enum Command {
     Diff(DiffArgs),
     /// Export saved report observables as STIX 2.1, MISP or CSV
     Export(ExportArgs),
+    /// Merge timestamps from local files into one sorted case timeline
+    Timeline(TimelineArgs),
     /// Encode text using a selected format
     Encode(EncodeArgs),
     /// Decode data using a selected format
@@ -392,6 +394,18 @@ pub enum HashCommand {
     Ssdeep(HashSsdeepArgs),
     /// Compare two ssdeep digests and print a 0-100 similarity score
     CompareSsdeep(HashCompareSsdeepArgs),
+    /// Calculate a TLSH locality-sensitive hash (inputs of 50 bytes or more)
+    Tlsh(HashSsdeepArgs),
+    /// Compare two TLSH digests and print their distance (0 = identical)
+    CompareTlsh(HashCompareTlshArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HashCompareTlshArgs {
+    /// First TLSH digest, such as T1A231...
+    pub left: String,
+    /// Second TLSH digest
+    pub right: String,
 }
 
 #[derive(Debug, Args)]
@@ -662,12 +676,27 @@ pub enum RulesCommand {
     ExportYara(RulesPathArgs),
     /// Convert a supported subset of YARA rules to Banshee TOML
     ImportYara(RulesPathArgs),
+    /// Convert Sigma rules to content-matching Banshee TOML (field names are ignored)
+    ImportSigma(RulesPathArgs),
+    /// Print the built-in starter rule pack as TOML, or list its rules
+    Builtin(RulesBuiltinArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct RulesPathArgs {
     /// Input rule file
     pub path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct RulesBuiltinArgs {
+    /// List rule IDs, severities and descriptions instead of printing TOML
+    #[arg(long)]
+    pub list: bool,
+
+    /// Emit machine-readable JSON (with --list)
+    #[arg(long, requires = "list")]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -683,8 +712,17 @@ pub struct RulesValidateArgs {
 #[derive(Debug, Args)]
 pub struct RulesScanArgs {
     /// Local TOML rule file
-    #[arg(short, long, value_name = "PATH")]
-    pub rules: PathBuf,
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        required_unless_present = "builtin_rules"
+    )]
+    pub rules: Option<PathBuf>,
+
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
 
     #[command(flatten)]
     pub source: SourceArgs,
@@ -723,6 +761,10 @@ pub struct ReportArgs {
     #[arg(long, value_name = "PATH")]
     pub rules: Option<PathBuf>,
 
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
+
     /// Report output format
     #[arg(long, value_enum, default_value_t = crate::report::ReportFormat::Text)]
     pub format: crate::report::ReportFormat,
@@ -752,6 +794,15 @@ pub struct ScanArgs {
     /// Optional local TOML rule file applied to every selected file
     #[arg(long, value_name = "PATH")]
     pub rules: Option<PathBuf>,
+
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
+
+    /// Text file of MD5, SHA-1 or SHA-256 digests (plain, sha256sum or NSRL
+    /// CSV); listed files are reported as known-good and not analyzed
+    #[arg(long, value_name = "PATH")]
+    pub known_good: Option<PathBuf>,
 
     /// Include matching relative paths; supports *, **, and ?
     #[arg(long, value_name = "GLOB")]
@@ -820,6 +871,10 @@ pub struct EvidenceCreateArgs {
     #[arg(long, value_name = "PATH")]
     pub rules: Option<PathBuf>,
 
+    /// Use the starter rule pack built into Banshee (see `rules builtin`)
+    #[arg(long, conflicts_with = "rules")]
+    pub builtin_rules: bool,
+
     /// Explicitly copy the source sample into the bundle as source-sample.bin
     #[arg(long)]
     pub include_sample: bool,
@@ -845,6 +900,28 @@ pub struct EvidenceVerifyArgs {
     /// Emit machine-readable JSON
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Events: file modification times, PE build stamps, email Date headers, shortcut target times, event log and capture ranges, and minidump times. Embedded times can be forged; each event names its source."
+)]
+pub struct TimelineArgs {
+    /// Files or directories to read
+    #[arg(required = true)]
+    pub paths: Vec<PathBuf>,
+
+    /// Descend into subdirectories
+    #[arg(long)]
+    pub recursive: bool,
+
+    /// Maximum regular files to read
+    #[arg(long, default_value_t = 10_000)]
+    pub max_files: usize,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = crate::timeline::TimelineFormat::Text)]
+    pub format: crate::timeline::TimelineFormat,
 }
 
 #[derive(Debug, Args)]

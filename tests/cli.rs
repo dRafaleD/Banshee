@@ -896,6 +896,53 @@ fn file_inspect_reports_elf_headers() {
 }
 
 #[test]
+fn builtin_rules_are_listed_printed_and_applied() {
+    let mut list = Command::cargo_bin("banshee").expect("binary");
+    list.args(["rules", "builtin", "--list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Built-in rules: "))
+        .stdout(predicate::str::contains("builtin.lolbin.certutil-decode"));
+
+    let mut print = Command::cargo_bin("banshee").expect("binary");
+    print
+        .args(["rules", "builtin"])
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("# Banshee built-in"));
+
+    // Joined at run time so the test source never holds the whole command.
+    let sample = ["cert", "util -de", "code payload.b64 payload.exe"].concat();
+    let mut scan = Command::cargo_bin("banshee").expect("binary");
+    scan.args(["rules", "scan", "--builtin-rules", "--fail-on-findings"])
+        .write_stdin(sample.clone())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("builtin.lolbin.certutil-decode"));
+
+    let mut conflict = Command::cargo_bin("banshee").expect("binary");
+    conflict
+        .args(["rules", "scan", "--builtin-rules", "--rules", "x.toml", "x"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
+
+    let path = temp_fixture("builtin-report.txt");
+    std::fs::write(&path, &sample).expect("write sample");
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .args(["report", "--builtin-rules", "--format", "json"])
+        .arg(&path)
+        .output()
+        .expect("run report");
+    std::fs::remove_file(&path).expect("remove fixture");
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("report JSON");
+    assert_eq!(report["rule_analysis"]["rule_file"], "builtin");
+    assert_eq!(report["rule_analysis"]["report"]["matched_rules"], 1);
+}
+
+#[test]
 fn rules_validate_and_scan_offline_with_finding_exit_status() {
     let path = temp_fixture("rules.toml");
     std::fs::write(
@@ -1287,6 +1334,97 @@ pattern = '(?i)powershell(?:\.exe)?\s+-enc'
 
     std::fs::remove_file(sample).expect("remove sample fixture");
     std::fs::remove_file(rules).expect("remove rule fixture");
+}
+
+#[test]
+fn timeline_merges_embedded_and_file_system_times() {
+    let root = temp_fixture("timeline");
+    std::fs::create_dir_all(&root).expect("create fixture directory");
+    let mail = root.join("mail.eml");
+    std::fs::write(
+        &mail,
+        "From: a@example.com\r\nTo: b@example.com\r\nSubject: s\r\nDate: Fri, 16 Oct 2026 09:12:44 +0200\r\n\r\nbody\r\n",
+    )
+    .expect("write mail fixture");
+
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .arg("timeline")
+        .arg(&root)
+        .args(["--format", "json"])
+        .output()
+        .expect("run timeline");
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("timeline JSON");
+    assert_eq!(report["files"], 1);
+    let events = report["events"].as_array().expect("events");
+    assert_eq!(events[0]["event"], "email Date header");
+    assert_eq!(events[0]["time"], "2026-10-16T07:12:44Z");
+    assert!(events.iter().any(|event| event["event"] == "file modified"));
+
+    let mut missing = Command::cargo_bin("banshee").expect("binary");
+    missing
+        .args(["timeline"])
+        .arg(root.join("absent.bin"))
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("Unreadable:"));
+    std::fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn scan_reports_known_good_files_without_analyzing_them() {
+    let root = temp_fixture("scan-known-good");
+    let samples = root.join("samples");
+    std::fs::create_dir_all(&samples).expect("create fixture directories");
+    std::fs::write(samples.join("clean.txt"), b"hello").expect("write clean fixture");
+    std::fs::write(
+        samples.join("other.txt"),
+        b"https://files.example.net/a.zip",
+    )
+    .expect("write other fixture");
+    // SHA-256 of "hello", in sha256sum layout, plus a comment.
+    let list = root.join("known.txt");
+    std::fs::write(
+        &list,
+        "# vendor baseline\n2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  clean.txt\n",
+    )
+    .expect("write list");
+
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .arg("scan")
+        .arg(&samples)
+        .arg("--known-good")
+        .arg(&list)
+        .args(["--format", "json"])
+        .output()
+        .expect("run scan");
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("scan JSON");
+    assert_eq!(report["summary"]["known_good"], 1);
+    assert_eq!(report["summary"]["analyzed"], 1);
+    let clean = report["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["path"] == "clean.txt")
+        .expect("clean result");
+    assert_eq!(clean["status"], "known_good");
+    assert!(clean.get("report").is_none());
+
+    let mut empty = Command::cargo_bin("banshee").expect("binary");
+    empty
+        .arg("scan")
+        .arg(&samples)
+        .arg("--known-good")
+        .arg(samples.join("other.txt"))
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "contains no MD5, SHA-1 or SHA-256",
+        ));
+    std::fs::remove_dir_all(root).expect("remove fixture");
 }
 
 #[test]

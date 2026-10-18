@@ -1134,7 +1134,7 @@ fn strip_parentheses(term: &str) -> &str {
     term
 }
 
-fn toml_string(value: &str) -> String {
+pub(super) fn toml_string(value: &str) -> String {
     let mut output = String::from("\"");
     for character in value.chars() {
         match character {
