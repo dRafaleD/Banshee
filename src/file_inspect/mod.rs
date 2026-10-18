@@ -17,6 +17,7 @@ mod document;
 mod dotnet;
 mod elf;
 mod email;
+mod evtx;
 mod java;
 mod macho;
 mod ordinals;
@@ -249,6 +250,9 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
         report.format = "Windows shortcut (LNK)".to_owned();
         let document = document::inspect_lnk(bytes)?;
         attach_document(&mut report, document);
+    } else if evtx::is_evtx(bytes) {
+        report.format = "Windows event log (EVTX)".to_owned();
+        attach_document(&mut report, evtx::inspect(bytes));
     } else if is_tar(bytes) {
         report.format = "TAR archive".to_owned();
         report.archive = Some(inspect_tar(bytes, max_entries, &mut report.findings)?);

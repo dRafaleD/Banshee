@@ -55,6 +55,9 @@ pub struct DocumentReport {
     /// Analysis limits that apply to this format, kept apart from findings.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// Further text for content analysis only, such as event log data.
+    #[serde(skip)]
+    pub extra_text: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,6 +82,7 @@ impl DocumentReport {
             targets_truncated: false,
             suspicious_properties: Vec::new(),
             notes: Vec::new(),
+            extra_text: Vec::new(),
         }
     }
 
@@ -112,6 +116,7 @@ impl DocumentReport {
                     .iter()
                     .map(|property| property.value.as_str()),
             )
+            .chain(self.extra_text.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join("\n")
     }

@@ -13,6 +13,12 @@ changes must be called out explicitly. Tags are immutable.
   confidence and ATT&CK IDs. `--builtin-rules` applies it in `rules scan`,
   `report`, `scan` and `evidence create`; `rules builtin` prints it as TOML
   or lists it with `--list`.
+- `file inspect` reads Windows event logs (EVTX): record count, record ID
+  and time range, event ID, provider and channel counts, noteworthy events
+  (log cleared, service installed, account and group changes, Defender
+  detections), CRC32 mismatches and missing record IDs. String values from
+  event data feed IOC extraction in `report`, `scan` and `evidence`. Counts
+  match `Get-WinEvent` on exported Application, System and PowerShell logs.
 
 ### Changed
 

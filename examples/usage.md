@@ -83,6 +83,8 @@ banshee file inspect Installer.dll        # .NET assembly, P/Invokes, Authentico
 banshee file inspect update.ps1           # download cradles, AMSI tampering, LOLBins
 banshee file inspect invoice.eml          # sender spoofing, attachments, links
 banshee file inspect delivery.iso         # files inside, shortcuts and executables flagged
+banshee file inspect Security.evtx        # event IDs, providers, time range, log clearing, CRC/ID gaps
+banshee report Security.evtx --format json # event data strings feed IOC extraction
 banshee rules import-yara library.yar --output library.toml   # wide, filesize, proximity
 # PE certificate-table presence is metadata only; signature trust is not verified.
 banshee report suspicious.exe
