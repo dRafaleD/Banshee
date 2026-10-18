@@ -35,6 +35,13 @@ changes must be called out explicitly. Tags are immutable.
   the main module, captured memory and the exception record. A dump of
   `lsass.exe` is flagged as a credential-theft artifact. Checked against
   real Windows Error Reporting crash dumps.
+- `timeline PATH...` merges timestamps from local files into one sorted
+  timeline (text, JSON or CSV): file modification times, PE build stamps,
+  email Date headers, shortcut target times, event log and capture ranges
+  and minidump times. Each event names its source; embedded times can be
+  forged.
+- `file inspect` lists the target created, accessed and modified times that
+  a Windows shortcut (LNK) header records.
 - `scan --known-good LIST` skips files whose MD5, SHA-1 or SHA-256 digest is
   in a local list (plain digests, `sha256sum` output or NSRL-style CSV). Such
   files get the `known_good` status and a `summary.known_good` count instead

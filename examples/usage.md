@@ -108,6 +108,8 @@ banshee diff baseline-evidence current-evidence --json
 banshee export report.json --format stix --output observables.stix.json
 banshee export case-evidence --format misp --output event.misp.json
 banshee export report.json --format csv
+banshee timeline ./case-files --recursive         # file, PE, email, LNK, EVTX, pcap and dump times
+banshee timeline mail.eml dump.dmp --format csv
 banshee scan ./samples
 banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --max-file-size 32MiB --max-total-size 512MiB

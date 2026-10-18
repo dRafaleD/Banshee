@@ -186,6 +186,8 @@ pub enum Command {
     Diff(DiffArgs),
     /// Export saved report observables as STIX 2.1, MISP or CSV
     Export(ExportArgs),
+    /// Merge timestamps from local files into one sorted case timeline
+    Timeline(TimelineArgs),
     /// Encode text using a selected format
     Encode(EncodeArgs),
     /// Decode data using a selected format
@@ -896,6 +898,28 @@ pub struct EvidenceVerifyArgs {
     /// Emit machine-readable JSON
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+#[command(
+    after_help = "Events: file modification times, PE build stamps, email Date headers, shortcut target times, event log and capture ranges, and minidump times. Embedded times can be forged; each event names its source."
+)]
+pub struct TimelineArgs {
+    /// Files or directories to read
+    #[arg(required = true)]
+    pub paths: Vec<PathBuf>,
+
+    /// Descend into subdirectories
+    #[arg(long)]
+    pub recursive: bool,
+
+    /// Maximum regular files to read
+    #[arg(long, default_value_t = 10_000)]
+    pub max_files: usize,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = crate::timeline::TimelineFormat::Text)]
+    pub format: crate::timeline::TimelineFormat,
 }
 
 #[derive(Debug, Args)]

@@ -38,7 +38,7 @@ Development guides: [installation](docs/INSTALLATION.md),
 | Inspect local artifacts | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Structural metadata for archives, disk images, PE/ELF/Mach-O and .NET executables, Authenticode signers, Office, RTF, PDF, LNK, OneNote, email, script, EVTX event log, minidump and pcap/pcapng capture files, plus strings and hex views |
 | Apply detection logic | `rules validate`, `rules scan`, `scan` | Local rule matches and per-file statuses |
 | Prepare an investigation report | `report` | Text, JSON, Markdown or self-contained HTML |
-| Preserve and compare results | `evidence`, `diff` | Hash-checked bundles and saved-report differences |
+| Preserve and compare results | `evidence`, `diff`, `timeline` | Hash-checked bundles, saved-report differences and sorted case timelines |
 | Share observables with other tools | `export` | STIX 2.1, MISP event JSON or CSV |
 | Work interactively | `banshee`, `shell` | A `banshee>` console with categorized help and Tab completion |
 | Check your installation | `doctor` | Offline report on codecs, bundled data, PATH and temp directory |

@@ -1337,6 +1337,42 @@ pattern = '(?i)powershell(?:\.exe)?\s+-enc'
 }
 
 #[test]
+fn timeline_merges_embedded_and_file_system_times() {
+    let root = temp_fixture("timeline");
+    std::fs::create_dir_all(&root).expect("create fixture directory");
+    let mail = root.join("mail.eml");
+    std::fs::write(
+        &mail,
+        "From: a@example.com\r\nTo: b@example.com\r\nSubject: s\r\nDate: Fri, 16 Oct 2026 09:12:44 +0200\r\n\r\nbody\r\n",
+    )
+    .expect("write mail fixture");
+
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .arg("timeline")
+        .arg(&root)
+        .args(["--format", "json"])
+        .output()
+        .expect("run timeline");
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("timeline JSON");
+    assert_eq!(report["files"], 1);
+    let events = report["events"].as_array().expect("events");
+    assert_eq!(events[0]["event"], "email Date header");
+    assert_eq!(events[0]["time"], "2026-10-16T07:12:44Z");
+    assert!(events.iter().any(|event| event["event"] == "file modified"));
+
+    let mut missing = Command::cargo_bin("banshee").expect("binary");
+    missing
+        .args(["timeline"])
+        .arg(root.join("absent.bin"))
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("Unreadable:"));
+    std::fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn scan_reports_known_good_files_without_analyzing_them() {
     let root = temp_fixture("scan-known-good");
     let samples = root.join("samples");

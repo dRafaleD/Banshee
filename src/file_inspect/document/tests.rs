@@ -199,6 +199,8 @@ fn lnk_reports_script_hosts_padding_hidden_windows_and_decoy_icons() {
     file[4..20].copy_from_slice(&super::LNK_CLSID);
     file[0x14..0x18].copy_from_slice(&flags.to_le_bytes());
     file[0x3C..0x40].copy_from_slice(&7_u32.to_le_bytes());
+    // Target created 2023-11-14T22:13:20Z (FILETIME); access time left unset.
+    file[0x1C..0x24].copy_from_slice(&133_444_736_000_000_000_u64.to_le_bytes());
     file.extend(lnk_string(
         r"..\..\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
     ));
@@ -220,6 +222,15 @@ fn lnk_reports_script_hosts_padding_hidden_windows_and_decoy_icons() {
     assert!(notes.contains("minimized"));
     assert!(notes.contains("document-like icon"));
     assert!(report.analysis_text().contains("http://lnk.example.test/p"));
+    let time = |name: &str| {
+        report
+            .properties
+            .iter()
+            .find(|property| property.name == name)
+            .map(|property| property.value.as_str())
+    };
+    assert_eq!(time("Target created (UTC)"), Some("2023-11-14T22:13:20Z"));
+    assert_eq!(time("Target accessed (UTC)"), None);
 
     // Declared strings that run past the end of the file are errors, not panics.
     assert!(inspect_lnk(&file[..file.len() - 10]).is_err());

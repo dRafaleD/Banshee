@@ -32,7 +32,7 @@ için [İngilizce README](README.md) esas kaynaktır.
 | Yerel dosyaları incelemek | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Arşiv, disk imajı, çalıştırılabilir dosya, Office, PDF, LNK, OneNote, e-posta, betik, EVTX olay logu, minidump ve pcap/pcapng yakalama dosyası yapısı |
 | Tespit mantığı uygulamak | `rules validate`, `rules scan`, `scan` | Yerel kural eşleşmeleri ve dosya bazında durumlar |
 | Rapor hazırlamak | `report` | Metin, JSON, Markdown, SARIF veya bağımsız HTML |
-| Sonuçları saklamak ve karşılaştırmak | `evidence`, `diff` | Hash kontrollü kanıt paketleri ve rapor farkları |
+| Sonuçları saklamak ve karşılaştırmak | `evidence`, `diff`, `timeline` | Hash kontrollü kanıt paketleri, rapor farkları ve sıralı vaka zaman çizelgeleri |
 | Göstergeleri paylaşmak | `export` | STIX 2.1, MISP olay JSON'u veya CSV |
 | Etkileşimli çalışmak | `banshee`, `shell` | Kategorili yardım ve Tab tamamlamalı `banshee>` konsolu |
 | Kurulumu kontrol etmek | `doctor` | Kodekler, gömülü veriler, PATH ve geçici dizin raporu |

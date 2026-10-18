@@ -610,6 +610,18 @@ const LNK_CLSID: [u8; 16] = [
     0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
 ];
 
+/// A FILETIME (100 ns ticks since 1601) as RFC 3339 UTC; zero means unset.
+fn filetime_utc(ticks: u64) -> Option<String> {
+    if ticks == 0 {
+        return None;
+    }
+    let seconds = i64::try_from(ticks / 10_000_000).ok()? - 11_644_473_600;
+    time::OffsetDateTime::from_unix_timestamp(seconds)
+        .ok()?
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
+}
+
 pub(super) fn is_lnk(bytes: &[u8]) -> bool {
     bytes.len() >= 0x4C
         && read_u32(bytes, 0, true) == Some(LNK_HEADER_SIZE)
@@ -622,6 +634,20 @@ pub(super) fn inspect_lnk(bytes: &[u8]) -> Result<DocumentReport> {
     let unicode = flags & 0x80 != 0;
     let mut offset = LNK_HEADER_SIZE as usize;
     let mut report = DocumentReport::new("Windows shortcut (LNK)");
+    // Target timestamps copied into the header when the shortcut was made.
+    for (at, name) in [
+        (0x1C, "Target created (UTC)"),
+        (0x24, "Target accessed (UTC)"),
+        (0x2C, "Target modified (UTC)"),
+    ] {
+        if let Some(time) = bytes
+            .get(at..at + 8)
+            .map(|raw| u64::from_le_bytes(raw.try_into().expect("8 bytes")))
+            .and_then(filetime_utc)
+        {
+            report.property(name, time);
+        }
+    }
 
     if flags & 0x1 != 0 {
         let size = read_u16(bytes, offset, true).context("truncated target ID list")?;

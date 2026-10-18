@@ -37,6 +37,7 @@ mod splash_boot;
 mod splash_portrait;
 pub mod strings;
 mod terminal;
+pub mod timeline;
 pub mod timestamp;
 mod tld;
 pub mod tlsh;
@@ -1010,6 +1011,11 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
         }
         Command::Export(args) => {
             output::with_output(|output| export::export(&args.input, args.format, output))?;
+        }
+        Command::Timeline(args) => {
+            let report = timeline::build(&args.paths, args.recursive, args.max_files)?;
+            has_operational_issues |= !report.errors.is_empty();
+            timeline::print(&report, args.format)?;
         }
         Command::Encode(args) => {
             let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
