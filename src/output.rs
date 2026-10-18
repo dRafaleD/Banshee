@@ -418,6 +418,12 @@ pub fn print_ioc_report(
                 if ioc.locations_truncated {
                     write!(output, "\tlocations=truncated")?;
                 }
+                // Last, so that scripts reading the earlier fields keep working.
+                if ioc.kind == crate::ioc::IocKind::Domain
+                    && let Some(detail) = &ioc.detail
+                {
+                    write!(output, "\tnote={}", terminal_safe(detail))?;
+                }
                 writeln!(output)?;
                 for location in &ioc.locations {
                     for context in &location.context {

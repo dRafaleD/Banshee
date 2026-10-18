@@ -38,6 +38,19 @@ changes must be called out explicitly. Tags are immutable.
 - Library API: `report::generate`, `scan::ScanOptions` and
   `evidence::CreateOptions` take a `report::RuleSource` (`rules`) instead of a
   rule file path (`rule_file`). Report and bundle JSON are unchanged.
+- `extract` text output ends domain lines with `note=` when the domain is
+  internationalized or a possible homoglyph. Earlier fields keep their order.
+
+### Fixed
+
+- Whole files and documents (256 bytes or more) are classified as
+  high-entropy only from 7.2 bits per byte, and their suspicion score counts
+  only entropy above 6 bits per byte. Ordinary text and executables were
+  reported as "possibly random or encrypted" with a high score. Short tokens
+  keep the previous thresholds.
+- Hex detection needs at least 8 digits, and digit-only values at least 16,
+  so years, invoice and phone numbers (`4471` decodes to `Dq`) are no longer
+  reported as Hex layers.
 
 ## 0.3.1 — 2026-10-16
 

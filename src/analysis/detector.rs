@@ -134,10 +134,15 @@ fn detect_hex(input: &str) -> Option<Detection> {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    if compact.len() < 4
+    if compact.len() < 8
         || !compact.len().is_multiple_of(2)
         || !compact.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
+        return None;
+    }
+    // Years, invoice numbers and phone numbers are digits that happen to
+    // decode to printable bytes ("4471" is "Dq"); real hex rarely lacks a-f.
+    if compact.len() < 16 && compact.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
 
