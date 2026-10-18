@@ -795,6 +795,11 @@ pub struct ScanArgs {
     #[arg(long, conflicts_with = "rules")]
     pub builtin_rules: bool,
 
+    /// Text file of MD5, SHA-1 or SHA-256 digests (plain, sha256sum or NSRL
+    /// CSV); listed files are reported as known-good and not analyzed
+    #[arg(long, value_name = "PATH")]
+    pub known_good: Option<PathBuf>,
+
     /// Include matching relative paths; supports *, **, and ?
     #[arg(long, value_name = "GLOB")]
     pub include: Vec<String>,

@@ -35,6 +35,10 @@ changes must be called out explicitly. Tags are immutable.
   the main module, captured memory and the exception record. A dump of
   `lsass.exe` is flagged as a credential-theft artifact. Checked against
   real Windows Error Reporting crash dumps.
+- `scan --known-good LIST` skips files whose MD5, SHA-1 or SHA-256 digest is
+  in a local list (plain digests, `sha256sum` output or NSRL-style CSV). Such
+  files get the `known_good` status and a `summary.known_good` count instead
+  of being analyzed.
 - TLSH fuzzy hashes: `hash tlsh` and `hash compare-tlsh`, a `tlsh` field in
   report hashes (omitted for inputs under 50 bytes or too uniform), and
   `tlsh_distance` in `diff`. Digests and distances match py-tlsh 5.0.0.

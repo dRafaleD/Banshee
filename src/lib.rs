@@ -18,6 +18,7 @@ mod i18n;
 pub mod input;
 pub mod ioc;
 pub mod jwt;
+pub mod known_good;
 pub mod output;
 pub mod recipe;
 pub mod regex_tool;
@@ -911,10 +912,16 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             report::print(&report, args.format)?;
         }
         Command::Scan(args) => {
+            let known_good = args
+                .known_good
+                .as_deref()
+                .map(known_good::KnownHashes::load)
+                .transpose()?;
             let report = scan::scan(
                 &args.path,
                 scan::ScanOptions {
                     recursive: args.recursive,
+                    known_good: known_good.as_ref(),
                     rules: report::RuleSource::from_flags(
                         args.rules.as_deref(),
                         args.builtin_rules,

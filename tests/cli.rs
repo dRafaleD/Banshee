@@ -1337,6 +1337,61 @@ pattern = '(?i)powershell(?:\.exe)?\s+-enc'
 }
 
 #[test]
+fn scan_reports_known_good_files_without_analyzing_them() {
+    let root = temp_fixture("scan-known-good");
+    let samples = root.join("samples");
+    std::fs::create_dir_all(&samples).expect("create fixture directories");
+    std::fs::write(samples.join("clean.txt"), b"hello").expect("write clean fixture");
+    std::fs::write(
+        samples.join("other.txt"),
+        b"https://files.example.net/a.zip",
+    )
+    .expect("write other fixture");
+    // SHA-256 of "hello", in sha256sum layout, plus a comment.
+    let list = root.join("known.txt");
+    std::fs::write(
+        &list,
+        "# vendor baseline\n2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  clean.txt\n",
+    )
+    .expect("write list");
+
+    let output = Command::cargo_bin("banshee")
+        .expect("binary")
+        .arg("scan")
+        .arg(&samples)
+        .arg("--known-good")
+        .arg(&list)
+        .args(["--format", "json"])
+        .output()
+        .expect("run scan");
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("scan JSON");
+    assert_eq!(report["summary"]["known_good"], 1);
+    assert_eq!(report["summary"]["analyzed"], 1);
+    let clean = report["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["path"] == "clean.txt")
+        .expect("clean result");
+    assert_eq!(clean["status"], "known_good");
+    assert!(clean.get("report").is_none());
+
+    let mut empty = Command::cargo_bin("banshee").expect("binary");
+    empty
+        .arg("scan")
+        .arg(&samples)
+        .arg("--known-good")
+        .arg(samples.join("other.txt"))
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "contains no MD5, SHA-1 or SHA-256",
+        ));
+    std::fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn scan_is_non_recursive_by_default_and_applies_glob_filters_in_path_order() {
     let root = temp_fixture("scan-filter-root");
     let nested = root.join("nested");

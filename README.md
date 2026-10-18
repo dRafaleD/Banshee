@@ -396,6 +396,8 @@ banshee report suspicious.bin --rules examples/rules.toml --format markdown --ou
 banshee scan ./samples
 banshee scan ./samples --recursive --include '*.exe' --exclude 'known-safe/**'
 banshee scan ./samples --recursive --rules examples/rules.toml --format jsonl
+# Skip files on a known-good list (plain digests, sha256sum output or NSRL CSV).
+banshee scan C:/Windows/System32 --known-good baseline-sha256.txt --format jsonl
 
 # SARIF 2.1.0 for code-scanning tools such as GitHub code scanning. Rule IDs
 # name the finding source and kind; levels follow the finding severity.
@@ -485,6 +487,9 @@ cargo build --release --locked
   symbolic links. It defaults to 10,000 considered regular files, 64 MiB per
   file, and 1 GiB total analyzed bytes; all limits can be lowered explicitly.
   Skipped, unreadable, unsupported, and failed entries remain distinct.
+  With `--known-good`, files whose MD5, SHA-1 or SHA-256 digest is listed are
+  hashed but not analyzed and get the `known_good` status. The list is
+  trusted as given, so only use lists you control.
 - A scan that preserves partial results but encounters unreadable or failed
   files returns status `2`. A complete scan uses the ordinary success or
   `--fail-on-findings` status behavior.
