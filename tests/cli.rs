@@ -862,6 +862,110 @@ fn new_codecs_are_available_from_the_cli() {
 }
 
 #[test]
+fn file_inspect_recognizes_event_logs_captures_notebooks_and_dumps() {
+    let inspect = |name: &str, bytes: Vec<u8>| {
+        let path = temp_fixture(name);
+        std::fs::write(&path, bytes).expect("write fixture");
+        let output = Command::cargo_bin("banshee")
+            .expect("binary")
+            .args(["file", "inspect"])
+            .arg(&path)
+            .output()
+            .expect("run file inspect");
+        std::fs::remove_file(&path).expect("remove fixture");
+        assert!(output.status.success(), "{name}");
+        String::from_utf8(output.stdout).expect("UTF-8 output")
+    };
+
+    // EVTX file header with a valid checksum and no chunks.
+    let mut evtx = vec![0_u8; 4096];
+    evtx[..8].copy_from_slice(b"ElfFile\0");
+    evtx[36..38].copy_from_slice(&2_u16.to_le_bytes());
+    evtx[38..40].copy_from_slice(&3_u16.to_le_bytes());
+    let mut crc = flate2::Crc::new();
+    crc.update(&evtx[..120]);
+    evtx[124..128].copy_from_slice(&crc.sum().to_le_bytes());
+    let text = inspect("header.evtx", evtx);
+    assert!(text.contains("Format: Windows event log (EVTX)"), "{text}");
+    assert!(text.contains("Records: 0"), "{text}");
+    assert!(!text.contains("Finding:"), "{text}");
+
+    // Classic pcap with one Ethernet/IPv4/UDP DNS query.
+    let mut dns = vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
+    for label in ["update", "example", "net"] {
+        dns.push(label.len() as u8);
+        dns.extend(label.as_bytes());
+    }
+    dns.extend([0, 0, 1, 0, 1]);
+    let mut udp = 50_000_u16.to_be_bytes().to_vec();
+    udp.extend(53_u16.to_be_bytes());
+    udp.extend(((8 + dns.len()) as u16).to_be_bytes());
+    udp.extend([0, 0]);
+    udp.extend(dns);
+    let mut ip = vec![0x45, 0];
+    ip.extend(((20 + udp.len()) as u16).to_be_bytes());
+    ip.extend([0, 0, 0x40, 0, 64, 17, 0, 0, 192, 0, 2, 10, 192, 0, 2, 53]);
+    ip.extend(udp);
+    let mut frame = vec![2_u8; 12];
+    frame.extend([0x08, 0x00]);
+    frame.extend(ip);
+    let mut pcap = vec![0xD4, 0xC3, 0xB2, 0xA1, 2, 0, 4, 0];
+    pcap.extend([0; 8]);
+    pcap.extend(65_535_u32.to_le_bytes());
+    pcap.extend(1_u32.to_le_bytes());
+    pcap.extend(1_700_000_000_u32.to_le_bytes());
+    pcap.extend(0_u32.to_le_bytes());
+    pcap.extend((frame.len() as u32).to_le_bytes());
+    pcap.extend((frame.len() as u32).to_le_bytes());
+    pcap.extend(frame);
+    let text = inspect("query.pcap", pcap);
+    assert!(text.contains("Format: Packet capture (pcap)"), "{text}");
+    assert!(
+        text.contains("DNS queries: update.example.net x1"),
+        "{text}"
+    );
+
+    // OneNote section with one embedded PE file.
+    let mut one = vec![
+        0xE4, 0x52, 0x5C, 0x7B, 0x8C, 0xD8, 0xA7, 0x4D, 0xAE, 0xB1, 0x53, 0x78, 0xD0, 0x29, 0x96,
+        0xD3,
+    ];
+    one.extend([0; 32]);
+    one.extend([
+        0xE7, 0x16, 0xE3, 0xBD, 0x65, 0x26, 0x11, 0x45, 0xA4, 0xC4, 0x8D, 0x4D, 0x0B, 0x7A, 0x9E,
+        0xAC,
+    ]);
+    one.extend(6_u64.to_le_bytes());
+    one.extend([0; 12]);
+    one.extend(b"MZ\x90\0\x03\0");
+    let text = inspect("lure.one", one);
+    assert!(text.contains("Format: OneNote section"), "{text}");
+    assert!(
+        text.contains("Finding: OneNote notebook embeds a Windows executable (PE)"),
+        "{text}"
+    );
+
+    // Minidump with one SystemInfo stream.
+    let mut dump = b"MDMP".to_vec();
+    dump.extend(0xA793_u32.to_le_bytes());
+    dump.extend(1_u32.to_le_bytes());
+    dump.extend(32_u32.to_le_bytes());
+    dump.extend([0; 16]);
+    dump.extend(7_u32.to_le_bytes());
+    dump.extend(56_u32.to_le_bytes());
+    dump.extend(44_u32.to_le_bytes());
+    let mut system = vec![9, 0, 6, 0, 0, 0, 8, 1];
+    system.extend(10_u32.to_le_bytes());
+    system.extend(0_u32.to_le_bytes());
+    system.extend(26_200_u32.to_le_bytes());
+    system.resize(56, 0);
+    dump.extend(system);
+    let text = inspect("crash.dmp", dump);
+    assert!(text.contains("Format: Windows minidump"), "{text}");
+    assert!(text.contains("Windows version: 10.0.26200"), "{text}");
+}
+
+#[test]
 fn file_inspect_reports_elf_headers() {
     let path = temp_fixture("fixture.elf");
     let mut bytes = vec![0_u8; 0x100];

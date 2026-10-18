@@ -919,6 +919,11 @@ pub struct TimelineArgs {
     #[arg(long, default_value_t = 10_000)]
     pub max_files: usize,
 
+    /// Maximum combined size inspected (bytes or KiB/MiB/GiB suffix); files
+    /// beyond it contribute only their modification time
+    #[arg(long, default_value = "1GiB", value_parser = parse_total_size)]
+    pub max_total_size: u64,
+
     /// Output format
     #[arg(long, value_enum, default_value_t = crate::timeline::TimelineFormat::Text)]
     pub format: crate::timeline::TimelineFormat,

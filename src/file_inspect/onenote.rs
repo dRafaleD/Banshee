@@ -23,6 +23,9 @@ const FILE_DATA_GUID: [u8; 16] = [
 /// GUID, cbLength (u64), unused (u32) and reserved (u64) precede the data.
 const FILE_DATA_HEADER_BYTES: usize = 16 + 8 + 4 + 8;
 const MAX_LISTED: usize = 64;
+/// Findings listed one by one; a crafted notebook can hold millions of
+/// tiny objects, so the rest are summarized.
+const MAX_FLAGGED: usize = 64;
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
 
 pub(super) fn is_onenote(bytes: &[u8]) -> bool {
@@ -93,6 +96,7 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
 
     let mut found = 0_usize;
     let mut risky = 0_usize;
+    let mut overruns = 0_usize;
     let mut text_bytes = 0_usize;
     let mut position = 16;
     while let Some(offset) = bytes
@@ -112,9 +116,12 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
             .ok()
             .and_then(|length| bytes.get(data_start..data_start.checked_add(length)?))
         else {
-            report.suspicious_properties.push(format!(
-                "OneNote file data object at offset {start} declares {length} bytes beyond the end of the file"
-            ));
+            overruns += 1;
+            if overruns <= MAX_FLAGGED {
+                report.suspicious_properties.push(format!(
+                    "OneNote file data object at offset {start} declares {length} bytes beyond the end of the file"
+                ));
+            }
             continue;
         };
         position = data_start + data.len();
@@ -129,17 +136,31 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
         }
         if suspicious {
             risky += 1;
-            report.suspicious_properties.push(format!(
-                "OneNote notebook embeds a {kind} ({} bytes, SHA-256 {sha256}); lures hide such files behind fake buttons",
-                data.len()
-            ));
-            if kind.contains("script") || kind.starts_with("VBScript") || kind.starts_with("HTML") {
-                let text = String::from_utf8_lossy(data);
-                if text_bytes + text.len() <= MAX_TEXT_BYTES {
-                    text_bytes += text.len();
-                    report.extra_text.push(text.into_owned());
-                }
+            if risky <= MAX_FLAGGED {
+                report.suspicious_properties.push(format!(
+                    "OneNote notebook embeds a {kind} ({} bytes, SHA-256 {sha256}); lures hide such files behind fake buttons",
+                    data.len()
+                ));
             }
+            let script =
+                kind.contains("script") || kind.starts_with("VBScript") || kind.starts_with("HTML");
+            if script && text_bytes + data.len() <= MAX_TEXT_BYTES {
+                text_bytes += data.len();
+                report
+                    .extra_text
+                    .push(String::from_utf8_lossy(data).into_owned());
+            }
+        }
+    }
+    for (count, what) in [
+        (risky, "embedded payloads"),
+        (overruns, "truncated file data objects"),
+    ] {
+        if count > MAX_FLAGGED {
+            report.suspicious_properties.push(format!(
+                "OneNote notebook has {} more {what} than the {MAX_FLAGGED} listed",
+                count - MAX_FLAGGED
+            ));
         }
     }
     report.property("Embedded files", found.to_string());
@@ -211,5 +232,19 @@ mod tests {
         let report = inspect(&bytes);
         assert!(report.suspicious_properties[0].contains("beyond the end of the file"));
         assert!(!is_onenote(b"not a notebook at all"));
+    }
+
+    #[test]
+    fn many_tiny_payloads_are_summarized() {
+        let blob: &[u8] = b"MZ";
+        let blobs = vec![blob; 10_000];
+        let report = inspect(&notebook(&blobs));
+        assert_eq!(report.suspicious_properties.len(), 65);
+        assert!(
+            report.suspicious_properties[64].contains("9936 more embedded payloads"),
+            "{}",
+            report.suspicious_properties[64]
+        );
+        assert!(report.properties.len() < 80);
     }
 }

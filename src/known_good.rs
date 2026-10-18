@@ -8,17 +8,27 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use sha2::Digest as _;
 
 use crate::hash::HashAlgorithm;
 
 const MAX_LIST_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Digests are kept as raw bytes, which takes about half the memory of hex
+/// strings for the multi-million-entry lists NSRL-style exports contain.
 #[derive(Debug, Default)]
 pub struct KnownHashes {
-    digests: HashSet<String>,
-    md5: bool,
-    sha1: bool,
-    sha256: bool,
+    md5: HashSet<[u8; 16]>,
+    sha1: HashSet<[u8; 20]>,
+    sha256: HashSet<[u8; 32]>,
+}
+
+fn decode<const N: usize>(hex: &str) -> Option<[u8; N]> {
+    let mut output = [0_u8; N];
+    for (byte, pair) in output.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(output)
 }
 
 impl KnownHashes {
@@ -26,7 +36,7 @@ impl KnownHashes {
         let bytes =
             crate::input::read_regular_file_limited(path, MAX_LIST_BYTES, "known-good hash list")?;
         let list = Self::parse(&String::from_utf8_lossy(&bytes));
-        if list.digests.is_empty() {
+        if list.is_empty() {
             bail!(
                 "known-good hash list '{}' contains no MD5, SHA-1 or SHA-256 digests",
                 path.display()
@@ -42,40 +52,49 @@ impl KnownHashes {
             let line = line.split('#').next().unwrap_or_default();
             for token in line.split(|character: char| !character.is_ascii_hexdigit()) {
                 match token.len() {
-                    32 => list.md5 = true,
-                    40 => list.sha1 = true,
-                    64 => list.sha256 = true,
-                    _ => continue,
+                    32 => list.md5.extend(decode(token)),
+                    40 => list.sha1.extend(decode(token)),
+                    64 => list.sha256.extend(decode(token)),
+                    _ => {}
                 }
-                list.digests.insert(token.to_ascii_lowercase());
             }
         }
         list
     }
 
     pub fn len(&self) -> usize {
-        self.digests.len()
+        self.md5.len() + self.sha1.len() + self.sha256.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.digests.is_empty()
+        self.len() == 0
     }
 
     /// The algorithm whose digest of `bytes` is listed, computing only the
     /// algorithms the list contains.
     pub fn matches(&self, bytes: &[u8]) -> Option<HashAlgorithm> {
-        [
-            (self.sha256, HashAlgorithm::Sha256),
-            (self.sha1, HashAlgorithm::Sha1),
-            (self.md5, HashAlgorithm::Md5),
-        ]
-        .into_iter()
-        .filter(|(present, _)| *present)
-        .find(|(_, algorithm)| {
-            crate::hash::calculate_bytes(bytes, *algorithm)
-                .is_ok_and(|report| self.digests.contains(&report.digest.to_ascii_lowercase()))
-        })
-        .map(|(_, algorithm)| algorithm)
+        if !self.sha256.is_empty()
+            && self
+                .sha256
+                .contains(&<[u8; 32]>::from(sha2::Sha256::digest(bytes)))
+        {
+            return Some(HashAlgorithm::Sha256);
+        }
+        if !self.sha1.is_empty()
+            && self
+                .sha1
+                .contains(&<[u8; 20]>::from(sha1::Sha1::digest(bytes)))
+        {
+            return Some(HashAlgorithm::Sha1);
+        }
+        if !self.md5.is_empty()
+            && self
+                .md5
+                .contains(&<[u8; 16]>::from(md5::Md5::digest(bytes)))
+        {
+            return Some(HashAlgorithm::Md5);
+        }
+        None
     }
 }
 
