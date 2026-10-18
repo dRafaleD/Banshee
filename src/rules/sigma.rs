@@ -102,16 +102,42 @@ fn unquote(value: &str) -> Result<String> {
         let mut output = String::new();
         let mut characters = inner.chars();
         while let Some(character) = characters.next() {
-            if character == '\\' {
-                match characters.next() {
-                    Some('n') => output.push('\n'),
-                    Some('t') => output.push('\t'),
-                    Some(other) => output.push(other),
-                    None => output.push('\\'),
-                }
-            } else {
+            if character != '\\' {
                 output.push(character);
+                continue;
             }
+            let escaped = match characters.next() {
+                Some('0') => '\0',
+                Some('a') => '\u{7}',
+                Some('b') => '\u{8}',
+                Some('t' | '\t') => '\t',
+                Some('n') => '\n',
+                Some('v') => '\u{b}',
+                Some('f') => '\u{c}',
+                Some('r') => '\r',
+                Some('e') => '\u{1b}',
+                Some('N') => '\u{85}',
+                Some('_') => '\u{a0}',
+                Some('L') => '\u{2028}',
+                Some('P') => '\u{2029}',
+                Some(digits @ ('x' | 'u' | 'U')) => {
+                    let length = match digits {
+                        'x' => 2,
+                        'u' => 4,
+                        _ => 8,
+                    };
+                    let hex: String = characters.by_ref().take(length).collect();
+                    u32::from_str_radix(&hex, 16)
+                        .ok()
+                        .filter(|_| hex.len() == length)
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| anyhow!("invalid escape \\{digits}{hex} in {value}"))?
+                }
+                Some(other @ (' ' | '"' | '/' | '\\')) => other,
+                Some(other) => bail!("invalid escape \\{other} in {value}"),
+                None => bail!("unterminated escape in {value}"),
+            };
+            output.push(escaped);
         }
         return Ok(output);
     }
@@ -220,10 +246,25 @@ impl Parser {
                 items.push(self.map(indent + offset)?);
             } else {
                 self.position += 1;
-                items.push(scalar(content)?);
+                let text = self.continuation(content, indent);
+                items.push(scalar(&text)?);
             }
         }
         Ok(Yaml::List(items))
+    }
+
+    /// Joins the deeper lines that continue a plain or quoted scalar.
+    fn continuation(&mut self, first: &str, indent: usize) -> String {
+        let mut text = first.to_owned();
+        while let Some(next) = self.peek() {
+            if next.indent <= indent {
+                break;
+            }
+            text.push(' ');
+            text.push_str(&next.text);
+            self.position += 1;
+        }
+        text
     }
 
     fn map(&mut self, indent: usize) -> Result<Yaml> {
@@ -261,17 +302,7 @@ impl Parser {
                     _ => Yaml::Null,
                 }
             } else {
-                // Plain and quoted scalars may continue on deeper lines.
-                let mut text = value.to_owned();
-                while let Some(next) = self.peek() {
-                    if next.indent <= indent {
-                        break;
-                    }
-                    text.push(' ');
-                    text.push_str(&next.text);
-                    self.position += 1;
-                }
-                scalar(&text)?
+                scalar(&self.continuation(value, indent))?
             };
             entries.push((key, value));
         }

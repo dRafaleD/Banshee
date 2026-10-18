@@ -40,8 +40,12 @@ changes must be called out explicitly. Tags are immutable.
   names are ignored), `or` and `1 of` branches become separate rules, and
   constructs without a content equivalent (`not`, aggregations, `timeframe`,
   `base64`, `cidr`, null checks) skip the rule with a reason. Levels, status,
-  ATT&CK tags, references and the log source carry over as metadata. Tested
-  with hand-written rules; not yet run against the SigmaHQ repository.
+  ATT&CK tags, references and the log source carry over as metadata. Against
+  the SigmaHQ `rules` folder (3,155 files, October 2026) 2,425 files convert
+  into 3,755 Banshee rules (902 of 1,191 in `windows/process_creation`); the
+  rest are skipped for `not` (597), null or empty values (92), `cidr`,
+  `base64offset` and `fieldref` modifiers (33), more than 16 branches (6) or
+  patterns over 32 KiB (2), with no parse errors.
 - `timeline PATH...` merges timestamps from local files into one sorted
   timeline (text, JSON or CSV): file modification times, PE build stamps,
   email Date headers, shortcut target times, event log and capture ranges
