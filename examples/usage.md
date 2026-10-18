@@ -99,6 +99,8 @@ banshee evidence create suspicious.bin --include-sample --output full-evidence
 banshee diff baseline-report.json current-report.json
 banshee hash ssdeep --file suspicious.bin
 banshee hash compare-ssdeep "96:abc...:def..." "96:abd...:def..."   # prints 0-100
+banshee hash tlsh --file suspicious.bin                 # T1... digest, inputs of 50+ bytes
+banshee hash compare-tlsh T1A231... T11931...           # distance, 0 = identical
 banshee diff baseline-evidence current-evidence --json
 banshee export report.json --format stix --output observables.stix.json
 banshee export case-evidence --format misp --output event.misp.json

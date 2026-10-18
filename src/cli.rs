@@ -392,6 +392,18 @@ pub enum HashCommand {
     Ssdeep(HashSsdeepArgs),
     /// Compare two ssdeep digests and print a 0-100 similarity score
     CompareSsdeep(HashCompareSsdeepArgs),
+    /// Calculate a TLSH locality-sensitive hash (inputs of 50 bytes or more)
+    Tlsh(HashSsdeepArgs),
+    /// Compare two TLSH digests and print their distance (0 = identical)
+    CompareTlsh(HashCompareTlshArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct HashCompareTlshArgs {
+    /// First TLSH digest, such as T1A231...
+    pub left: String,
+    /// Second TLSH digest
+    pub right: String,
 }
 
 #[derive(Debug, Args)]

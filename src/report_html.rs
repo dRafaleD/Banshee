@@ -175,6 +175,9 @@ fn write_file_section(output: &mut dyn Write, report: &UnifiedReport) -> Result<
     if let Some(ssdeep) = &report.hashes.ssdeep {
         row(output, "ssdeep", &code(ssdeep))?;
     }
+    if let Some(tlsh) = &report.hashes.tlsh {
+        row(output, "TLSH", &code(tlsh))?;
+    }
     if let Some(compression) = &file.compression {
         row(
             output,

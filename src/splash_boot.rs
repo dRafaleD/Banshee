@@ -185,7 +185,7 @@ pub(crate) fn compose(info: &SplashInfo, portrait_rows: usize, width: usize) -> 
             "Decodes",
             "base64 hex url html unicode utf16 xor scripts".to_owned(),
         ),
-        ("Hashes", "md5 sha1 sha256 imphash ssdeep".to_owned()),
+        ("Hashes", "md5 sha1 sha256 imphash ssdeep tlsh".to_owned()),
         (
             "Reports",
             "text json markdown html · stix misp csv".to_owned(),

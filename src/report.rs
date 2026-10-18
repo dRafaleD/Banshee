@@ -273,6 +273,9 @@ pub struct FileHashes {
     /// ssdeep fuzzy hash for similarity between related samples.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssdeep: Option<String>,
+    /// TLSH digest; omitted for inputs too short or uniform for one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tlsh: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -435,6 +438,7 @@ pub fn generate_from_bytes(
         sha1: digest(bytes, HashAlgorithm::Sha1)?,
         sha256: file.sha256.clone(),
         ssdeep: Some(crate::fuzzy::ssdeep(bytes)),
+        tlsh: crate::tlsh::tlsh(bytes),
     };
     let mut content_report =
         crate::batch::analyze_bytes_with_source(bytes, max_depth, max_tokens, name);
@@ -627,6 +631,9 @@ fn write_text(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
     if let Some(ssdeep) = &report.hashes.ssdeep {
         writeln!(output, "ssdeep: {ssdeep}")?;
     }
+    if let Some(tlsh) = &report.hashes.tlsh {
+        writeln!(output, "TLSH: {tlsh}")?;
+    }
     if let Some(compression) = &report.file.compression {
         writeln!(
             output,
@@ -786,6 +793,9 @@ fn write_markdown(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> 
     writeln!(output, "- SHA-256: `{}`", report.hashes.sha256)?;
     if let Some(ssdeep) = &report.hashes.ssdeep {
         writeln!(output, "- ssdeep: `{ssdeep}`")?;
+    }
+    if let Some(tlsh) = &report.hashes.tlsh {
+        writeln!(output, "- TLSH: `{tlsh}`")?;
     }
     writeln!(output)?;
     if let Some(compression) = &report.file.compression {

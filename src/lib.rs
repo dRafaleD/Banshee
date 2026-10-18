@@ -36,6 +36,7 @@ pub mod strings;
 mod terminal;
 pub mod timestamp;
 mod tld;
+pub mod tlsh;
 pub mod watch;
 
 use std::io::IsTerminal as _;
@@ -282,6 +283,20 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             HashCommand::CompareSsdeep(args) => {
                 let score = fuzzy::compare(&args.left, &args.right)?;
                 output::write_line(&score.to_string())?;
+            }
+            HashCommand::Tlsh(args) => {
+                let value = input::read_bytes(&args.source.input, args.source.file.as_deref())?;
+                let digest = tlsh::tlsh(&value).with_context(|| {
+                    format!(
+                        "no TLSH digest: input needs at least {} bytes and enough byte variety",
+                        tlsh::MIN_BYTES
+                    )
+                })?;
+                output::write_line(&digest)?;
+            }
+            HashCommand::CompareTlsh(args) => {
+                let distance = tlsh::distance(&args.left, &args.right)?;
+                output::write_line(&distance.to_string())?;
             }
             HashCommand::Identify(args) => {
                 let report = hash::identify(&args.value)?;
