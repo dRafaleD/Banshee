@@ -42,6 +42,8 @@ const HEURISTICS: &[(&str, &[&str])] = &[
     // Event logs (file_inspect::evtx).
     ("(audit log cleared)", &["T1070.001"]),
     ("(event log cleared)", &["T1070.001"]),
+    // Minidumps (file_inspect::minidump).
+    ("minidump of lsass.exe", &["T1003.001"]),
     // Packet captures (file_inspect::pcap).
     (
         "cleartext http request to an ip address host",

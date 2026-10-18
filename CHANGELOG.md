@@ -30,6 +30,11 @@ changes must be called out explicitly. Tags are immutable.
   and TLS ClientHello server names. Cleartext HTTP requests to an IP address
   are flagged. Names and addresses feed IOC extraction. Streams are not
   reassembled. Tested with synthetic captures only.
+- `file inspect` reads Windows minidumps (`MDMP`): dump time and type,
+  processor and Windows version, process ID, threads, loaded modules with
+  the main module, captured memory and the exception record. A dump of
+  `lsass.exe` is flagged as a credential-theft artifact. Checked against
+  real Windows Error Reporting crash dumps.
 - TLSH fuzzy hashes: `hash tlsh` and `hash compare-tlsh`, a `tlsh` field in
   report hashes (omitted for inputs under 50 bytes or too uniform), and
   `tlsh_distance` in `diff`. Digests and distances match py-tlsh 5.0.0.

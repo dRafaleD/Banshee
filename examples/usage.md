@@ -86,6 +86,7 @@ banshee file inspect delivery.iso         # files inside, shortcuts and executab
 banshee file inspect Security.evtx        # event IDs, providers, time range, log clearing, CRC/ID gaps
 banshee file inspect capture.pcapng       # conversations, ports, DNS names, HTTP hosts, TLS SNI
 banshee file inspect invoice.one          # embedded files typed and hashed, lure payloads flagged
+banshee file inspect crash.dmp            # minidump modules, threads, exception; lsass dumps flagged
 banshee report Security.evtx --format json # event data strings feed IOC extraction
 banshee rules import-yara library.yar --output library.toml   # wide, filesize, proximity
 # PE certificate-table presence is metadata only; signature trust is not verified.

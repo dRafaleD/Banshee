@@ -29,7 +29,7 @@ için [İngilizce README](README.md) esas kaynaktır.
 | --- | --- | --- |
 | Bilinmeyen bir değeri anlamak | `whatis`, `entropy`, `recipe` | Kodlama katmanları ve açıklamalı sinyaller |
 | Loglardan gösterge toplamak | `extract`, `analyze`, `watch` | Normalleştirilmiş IOC'ler, bağlam satırları, maskelenmiş gizli bilgi adayları |
-| Yerel dosyaları incelemek | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Arşiv, disk imajı, çalıştırılabilir dosya, Office, PDF, LNK, OneNote, e-posta, betik, EVTX olay logu ve pcap/pcapng yakalama dosyası yapısı |
+| Yerel dosyaları incelemek | `file inspect`, `strings`, `hexdump`, `jwt`, `cert`, `hash` | Arşiv, disk imajı, çalıştırılabilir dosya, Office, PDF, LNK, OneNote, e-posta, betik, EVTX olay logu, minidump ve pcap/pcapng yakalama dosyası yapısı |
 | Tespit mantığı uygulamak | `rules validate`, `rules scan`, `scan` | Yerel kural eşleşmeleri ve dosya bazında durumlar |
 | Rapor hazırlamak | `report` | Metin, JSON, Markdown, SARIF veya bağımsız HTML |
 | Sonuçları saklamak ve karşılaştırmak | `evidence`, `diff` | Hash kontrollü kanıt paketleri ve rapor farkları |
