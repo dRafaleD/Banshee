@@ -26,6 +26,13 @@ changes must be called out explicitly. Tags are immutable.
   them in Punycode; Punycode domains are decoded for review. Domains that mix
   Latin with Cyrillic, Greek or Armenian letters, or read as an ASCII name,
   carry a "possible homoglyph" detail and are medium-severity report findings.
+- Report findings have an optional `attack` list. Rule findings copy their
+  rule's techniques; heuristic findings with a clear technique (script
+  patterns, remote templates, Equation Editor objects, double extensions,
+  Reply-To mismatches, hidden files, packers, cleared event logs, lookalike
+  domains) are mapped from a table and also end their detail with
+  `[ATT&CK …]`. HTML coverage counts all findings, and SARIF results carry
+  `attack/<id>` tags.
 - Documentation: `docs/WALKTHROUGH.md` follows a harmless phishing email
   from inspection to evidence, diff and STIX export, and `README.tr.md` is a
   Turkish guide. Release archives include both.

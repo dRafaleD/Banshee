@@ -335,6 +335,10 @@ pub struct ReportFinding {
     pub kind: String,
     pub value: String,
     pub detail: String,
+    /// ATT&CK techniques declared by a rule or mapped from a heuristic
+    /// finding (see `attack.rs`); intent, not confirmed behavior.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attack: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -520,9 +524,16 @@ fn collect_findings(
         kind: "file_property".to_owned(),
         value: file.path.clone(),
         detail: finding.clone(),
+        attack: Vec::new(),
     }));
     findings.extend(content.analyses.iter().map(content_finding));
     findings.extend(content.iocs.iocs.iter().map(ioc_finding));
+    for finding in &mut findings {
+        finding.attack = crate::attack::for_finding(&finding.detail);
+        if !finding.attack.is_empty() {
+            finding.detail = format!("{} [ATT&CK {}]", finding.detail, finding.attack.join(", "));
+        }
+    }
     if let Some(report) = &rules.report {
         findings.extend(report.matches.iter().map(rule_finding));
     }
@@ -548,6 +559,7 @@ fn content_finding(item: &TokenAnalysis) -> ReportFinding {
             },
             |line| format!("interesting token on line {line}"),
         ),
+        attack: Vec::new(),
     }
 }
 
@@ -583,6 +595,7 @@ fn ioc_finding(ioc: &Ioc) -> ReportFinding {
                     if ioc.occurrences == 1 { "" } else { "s" },
                 ),
             },
+        attack: Vec::new(),
     }
 }
 
@@ -604,6 +617,7 @@ fn rule_finding(rule: &RuleMatchReport) -> ReportFinding {
                 format!("{detail} [ATT&CK {}]", rule.attack.join(", "))
             }
         },
+        attack: rule.attack.clone(),
     }
 }
 

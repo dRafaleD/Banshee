@@ -124,12 +124,13 @@ fn write_summary(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
         writeln!(
             output,
             "<section><h2>ATT&amp;CK coverage</h2><p class=\"muted\">Identifiers declared by \
-             matching local rules; they describe rule intent, not confirmed behavior.</p><p>{}</p>\
+             matching local rules or mapped from Banshee's heuristic findings; they describe \
+             intent, not confirmed behavior.</p><p>{}</p>\
              </section>",
             attack
                 .iter()
-                .map(|(identifier, rules)| format!(
-                    "<code>{}</code> <span class=\"muted\">×{rules}</span>",
+                .map(|(identifier, findings)| format!(
+                    "<code>{}</code> <span class=\"muted\">×{findings}</span>",
                     escape(identifier)
                 ))
                 .collect::<Vec<_>>()
@@ -141,13 +142,8 @@ fn write_summary(output: &mut dyn Write, report: &UnifiedReport) -> Result<()> {
 
 fn attack_coverage(report: &UnifiedReport) -> std::collections::BTreeMap<&str, usize> {
     let mut coverage = std::collections::BTreeMap::new();
-    for rule in report
-        .rule_analysis
-        .report
-        .iter()
-        .flat_map(|rules| &rules.matches)
-    {
-        for identifier in &rule.attack {
+    for finding in &report.findings {
+        for identifier in &finding.attack {
             *coverage.entry(identifier.as_str()).or_default() += 1;
         }
     }

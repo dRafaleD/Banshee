@@ -653,6 +653,10 @@ by `rules validate` and `rules scan`.
 - Rule confidence, references and ATT&CK identifiers are author-supplied
   metadata, not validation of a claim or observed behavior. Banshee never
   fetches rule references.
+- Report findings from file inspection and IOC extraction carry ATT&CK
+  identifiers only where the finding clearly suggests a technique (for
+  example a remote template, a double extension, a cleared event log or a
+  lookalike domain). The table lives in `src/attack.rs`.
 - Evidence bundles omit the source sample by default. `--include-sample` is an
   explicit opt-in that copies it as `source-sample.bin`; protect and share such
   bundles according to the sensitivity of the original data.

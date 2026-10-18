@@ -51,6 +51,20 @@ pub fn build(reports: &[(&str, &UnifiedReport)]) -> Value {
             } else {
                 format!("{} ({})", finding.value, finding.detail)
             };
+            let mut properties = json!({
+                "severity": finding.severity,
+                "sha256": report.hashes.sha256,
+            });
+            if !finding.attack.is_empty() {
+                // SARIF property-bag tags; viewers can filter on them.
+                properties["tags"] = json!(
+                    finding
+                        .attack
+                        .iter()
+                        .map(|id| format!("attack/{id}"))
+                        .collect::<Vec<_>>()
+                );
+            }
             results.push(json!({
                 "ruleId": id,
                 "level": level(finding.severity),
@@ -58,10 +72,7 @@ pub fn build(reports: &[(&str, &UnifiedReport)]) -> Value {
                 "locations": [{
                     "physicalLocation": { "artifactLocation": { "uri": uri } }
                 }],
-                "properties": {
-                    "severity": finding.severity,
-                    "sha256": report.hashes.sha256,
-                },
+                "properties": properties,
             }));
         }
     }

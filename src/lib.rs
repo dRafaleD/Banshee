@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod attack;
 pub mod banner;
 pub mod batch;
 pub mod cert;
