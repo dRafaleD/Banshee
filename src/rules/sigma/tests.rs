@@ -209,3 +209,57 @@ fn yaml_reader_handles_block_scalars_quotes_and_comments() {
     );
     assert!(import_source("title: x\n\tdetection: y\n").is_err());
 }
+
+#[test]
+fn yaml_reader_decodes_double_quoted_unicode_escapes() {
+    let source = "title: Homoglyphs\n\
+                  detection:\n\
+                  \x20   selection:\n\
+                  \x20       Field|contains:\n\
+                  \x20           - \"\\u0410\" # Cyrillic A\n\
+                  \x20           - \"tab\\x09\\U0001F600\"\n\
+                  \x20   condition: selection\n";
+    let conversion = import_source(source).expect("import");
+    assert_eq!(conversion.converted, 1, "{:?}", conversion.skipped);
+    for (input, matched) in [("p\u{0430}ypal", 1), ("tab\t\u{1F600}", 1), ("u0410", 0)] {
+        assert_eq!(
+            scan_source(&conversion.output, input.as_bytes())
+                .unwrap()
+                .matched_rules,
+            matched,
+            "{input:?}"
+        );
+    }
+    assert!(import_source("title: \"bad \\q escape\"\n").is_err());
+    assert!(import_source("title: \"short \\u04\"\n").is_err());
+}
+
+#[test]
+fn yaml_reader_joins_list_items_wrapped_onto_deeper_lines() {
+    let source = "title: Wrapped List Item\n\
+                  detection:\n\
+                  \x20   selection:\n\
+                  \x20       - first value\n\
+                  \x20         continued here\n\
+                  \x20       - 'quoted value\n\
+                  \x20         also wrapped'\n\
+                  \x20   condition: selection\n\
+                  falsepositives:\n\
+                  \x20   - Admins who are part of the group.\n\
+                  \x20     These users shouldn't be flagged.\n\
+                  level: low\n";
+    let conversion = import_source(source).expect("import");
+    assert_eq!(conversion.converted, 1, "{:?}", conversion.skipped);
+    for (input, matched) in [
+        (&b"first value continued here"[..], 1),
+        (b"quoted value also wrapped", 1),
+        (b"first value", 0),
+    ] {
+        assert_eq!(
+            scan_source(&conversion.output, input)
+                .unwrap()
+                .matched_rules,
+            matched
+        );
+    }
+}
