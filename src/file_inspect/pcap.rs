@@ -157,7 +157,7 @@ fn pcapng(bytes: &[u8], visit: &mut dyn FnMut(Packet<'_>) -> bool) -> Option<Str
         }
         let block_type = order.u32(bytes, position)?;
         let length = order.u32(bytes, position + 4)? as usize;
-        if length < 12 || length % 4 != 0 {
+        if length < 12 || !length.is_multiple_of(4) {
             return Some(format!(
                 "block at offset {position} has an invalid length {length}"
             ));
@@ -570,7 +570,6 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
     } else {
         classic(bytes, &mut visit)
     };
-    drop(visit);
 
     if let Some(problem) = problem {
         report.notes.push(problem);
