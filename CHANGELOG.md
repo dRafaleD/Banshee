@@ -95,6 +95,18 @@ changes must be called out explicitly. Tags are immutable.
 - Hex detection needs at least 8 digits, and digit-only values at least 16,
   so years, invoice and phone numbers (`4471` decodes to `Dq`) are no longer
   reported as Hex layers.
+- Minidump inspection bounds module names (4,096 names, 1 MiB in total) and
+  only walks module and memory entries that fit in their stream. A crafted
+  dump whose modules all point at one long name could otherwise allocate
+  hundreds of gigabytes, and inflated range counts could loop for minutes.
+- OneNote inspection lists at most 64 payload and truncated-object findings
+  and summarizes the rest, and skips oversized script text before converting
+  it. A notebook of many tiny objects produced one finding each.
+- `timeline` stops inspecting files once `--max-total-size` (default 1 GiB) is
+  reached; later files are listed by modification time only and counted in
+  `files_not_inspected`.
+- `scan --known-good` keeps digests as bytes, about half the memory of the
+  previous hex strings for large lists.
 
 ## 0.3.1 — 2026-10-16
 

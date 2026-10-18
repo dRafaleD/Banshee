@@ -1028,7 +1028,12 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
             output::with_output(|output| export::export(&args.input, args.format, output))?;
         }
         Command::Timeline(args) => {
-            let report = timeline::build(&args.paths, args.recursive, args.max_files)?;
+            let report = timeline::build(
+                &args.paths,
+                args.recursive,
+                args.max_files,
+                args.max_total_size,
+            )?;
             has_operational_issues |= !report.errors.is_empty();
             timeline::print(&report, args.format)?;
         }

@@ -46,6 +46,9 @@ pub struct TimelineReport {
     pub schema_version: u8,
     pub files: usize,
     pub files_limit_reached: bool,
+    /// Files listed only by modification time because the combined size
+    /// limit was reached before they were inspected.
+    pub files_not_inspected: usize,
     pub events: Vec<TimelineEvent>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<TimelineError>,
@@ -181,25 +184,28 @@ fn discover(paths: &[PathBuf], recursive: bool, max_files: usize) -> (Vec<PathBu
     (files, reached)
 }
 
-pub fn build(paths: &[PathBuf], recursive: bool, max_files: usize) -> Result<TimelineReport> {
+pub fn build(
+    paths: &[PathBuf],
+    recursive: bool,
+    max_files: usize,
+    max_total_size: u64,
+) -> Result<TimelineReport> {
     if paths.is_empty() {
         bail!("timeline needs at least one file or directory");
     }
     let (files, files_limit_reached) = discover(paths, recursive, max_files);
     let mut events = Vec::new();
     let mut errors = Vec::new();
+    let mut inspected_bytes = 0_u64;
+    let mut files_not_inspected = 0_usize;
     for path in &files {
         let source = path.display().to_string();
         let mut collector = Collector {
             source: &source,
             events: Vec::new(),
         };
-        match std::fs::metadata(path).and_then(|metadata| metadata.modified()) {
-            Ok(modified) => collector.push(
-                OffsetDateTime::from(modified),
-                "file modified",
-                "file-system modification time",
-            ),
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
             Err(error) => {
                 errors.push(TimelineError {
                     path: source.clone(),
@@ -207,7 +213,20 @@ pub fn build(paths: &[PathBuf], recursive: bool, max_files: usize) -> Result<Tim
                 });
                 continue;
             }
+        };
+        if let Ok(modified) = metadata.modified() {
+            collector.push(
+                OffsetDateTime::from(modified),
+                "file modified",
+                "file-system modification time",
+            );
         }
+        if inspected_bytes.saturating_add(metadata.len()) > max_total_size {
+            files_not_inspected += 1;
+            events.extend(collector.events);
+            continue;
+        }
+        inspected_bytes += metadata.len();
         match crate::file_inspect::inspect_file(path, MAX_ARCHIVE_ENTRIES) {
             Ok(report) => embedded_events(&report, &mut collector),
             Err(error) => errors.push(TimelineError {
@@ -227,6 +246,7 @@ pub fn build(paths: &[PathBuf], recursive: bool, max_files: usize) -> Result<Tim
         schema_version: SCHEMA_VERSION,
         files: files.len(),
         files_limit_reached,
+        files_not_inspected,
         events,
         errors,
     })
@@ -272,6 +292,13 @@ pub fn print(report: &TimelineReport, format: TimelineFormat) -> Result<()> {
                 )?;
                 if report.files_limit_reached {
                     writeln!(output, "File limit reached; later files were not read")?;
+                }
+                if report.files_not_inspected > 0 {
+                    writeln!(
+                        output,
+                        "Size limit reached: {} file(s) listed by modification time only",
+                        report.files_not_inspected
+                    )?;
                 }
                 for error in &report.errors {
                     writeln!(
@@ -321,7 +348,7 @@ mod tests {
         .unwrap();
         std::fs::write(root.join("nested").join("note.txt"), "plain").unwrap();
 
-        let shallow = build(std::slice::from_ref(&root), false, 100).unwrap();
+        let shallow = build(std::slice::from_ref(&root), false, 100, u64::MAX).unwrap();
         assert_eq!(shallow.files, 1);
         let events: Vec<&str> = shallow
             .events
@@ -337,10 +364,20 @@ mod tests {
         );
         assert_eq!(shallow.events[0].time, "2026-10-16T09:12:44Z");
 
-        let deep = build(std::slice::from_ref(&root), true, 100).unwrap();
+        let deep = build(std::slice::from_ref(&root), true, 100, u64::MAX).unwrap();
         assert_eq!(deep.files, 2);
-        let limited = build(std::slice::from_ref(&root), true, 1).unwrap();
+        let limited = build(std::slice::from_ref(&root), true, 1, u64::MAX).unwrap();
         assert!(limited.files_limit_reached);
+
+        // Over the size limit the email is listed by mtime only.
+        let small = build(std::slice::from_ref(&root), false, 100, 10).unwrap();
+        assert_eq!(small.files_not_inspected, 1);
+        let events: Vec<&str> = small
+            .events
+            .iter()
+            .map(|event| event.event.as_str())
+            .collect();
+        assert_eq!(events, ["file modified"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

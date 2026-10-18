@@ -11,7 +11,12 @@ use time::format_description::well_known::Rfc3339;
 use super::document::DocumentReport;
 
 const MAX_STREAMS: usize = 4_096;
-const MAX_MODULES: usize = 65_536;
+/// Module names kept per dump; module lists can repeat or point every
+/// entry at one long name, so both count and total size are bounded.
+const MAX_MODULES: usize = 4_096;
+const MAX_MODULE_NAME_BYTES: usize = 1024 * 1024;
+/// Windows paths are at most 32,767 UTF-16 units.
+const MAX_STRING_BYTES: usize = 65_534;
 const MODULE_BYTES: usize = 108;
 const MAX_LISTED_MODULES: usize = 32;
 
@@ -40,7 +45,7 @@ fn u64_at(bytes: &[u8], offset: usize) -> Option<u64> {
 /// MINIDUMP_STRING: a byte length followed by UTF-16LE text.
 fn string_at(bytes: &[u8], rva: usize) -> Option<String> {
     let length = u32_at(bytes, rva)? as usize;
-    if length > 64 * 1024 {
+    if length > MAX_STRING_BYTES {
         return None;
     }
     let raw = bytes.get(rva + 4..rva + 4 + length)?;
@@ -125,6 +130,8 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
 
     let mut modules: Vec<String> = Vec::new();
     let mut module_count = 0_usize;
+    let mut name_bytes = 0_usize;
+    let mut names_truncated = false;
     for index in 0..streams.min(MAX_STREAMS) {
         let entry = directory as usize + index * 12;
         let (Some(kind), Some(size), Some(rva)) = (
@@ -153,18 +160,26 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
             4 => {
                 let count = u32_at(stream, 0).unwrap_or_default() as usize;
                 module_count = count;
-                for module in 0..count.min(MAX_MODULES) {
+                // Entries beyond the stream cannot exist, whatever the count says.
+                let present = count.min(stream.len().saturating_sub(4) / MODULE_BYTES);
+                for module in 0..present {
+                    if modules.len() >= MAX_MODULES || name_bytes >= MAX_MODULE_NAME_BYTES {
+                        names_truncated = true;
+                        break;
+                    }
                     let Some(name_rva) = u32_at(stream, 4 + module * MODULE_BYTES + 20) else {
                         break;
                     };
                     if let Some(name) = string_at(bytes, name_rva as usize) {
+                        name_bytes += name.len();
                         modules.push(name);
                     }
                 }
             }
             5 => {
                 if let Some(ranges) = u32_at(stream, 0) {
-                    let total: u64 = (0..ranges.min(1 << 20) as usize)
+                    let present = (ranges as usize).min(stream.len().saturating_sub(4) / 16);
+                    let total: u64 = (0..present)
                         .filter_map(|range| u32_at(stream, 4 + range * 16 + 8))
                         .map(u64::from)
                         .sum();
@@ -173,9 +188,12 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
             }
             9 => {
                 if let Some(ranges) = u64_at(stream, 0) {
-                    let total: u64 = (0..ranges.min(1 << 20) as usize)
+                    let present = usize::try_from(ranges)
+                        .unwrap_or(usize::MAX)
+                        .min(stream.len().saturating_sub(16) / 16);
+                    let total: u64 = (0..present)
                         .filter_map(|range| u64_at(stream, 16 + range * 16 + 8))
-                        .sum();
+                        .fold(0_u64, u64::saturating_add);
                     report.property("Memory ranges", format!("{ranges} ({total} bytes)"));
                 }
             }
@@ -229,6 +247,12 @@ pub(super) fn inspect(bytes: &[u8]) -> DocumentReport {
     if modules.len() > MAX_LISTED_MODULES + 1 {
         report.notes.push(format!(
             "only the main module and the next {MAX_LISTED_MODULES} modules are listed"
+        ));
+    }
+    if names_truncated {
+        report.notes.push(format!(
+            "module names were read up to {MAX_MODULES} names or {} KiB",
+            MAX_MODULE_NAME_BYTES / 1024
         ));
     }
     report.extra_text = modules;
@@ -339,5 +363,55 @@ mod tests {
                 .any(|note| note.contains("beyond the end"))
         );
         assert!(inspect(b"MDMP").suspicious_properties[0].contains("truncated"));
+    }
+
+    #[test]
+    fn crafted_counts_and_shared_names_stay_bounded() {
+        // 4,096 directory entries all pointing at one module list whose
+        // 2,000 entries share one 64 KiB name, plus a memory list claiming
+        // u32::MAX ranges in four bytes.
+        let streams = 4_096_usize;
+        let directory = 32;
+        let modules_at = directory + streams * 12;
+        let module_entries = 2_000;
+        let memory_at = modules_at + 4 + module_entries * 108;
+        let name_at = memory_at + 4;
+        let mut bytes = b"MDMP".to_vec();
+        bytes.extend(0xA793u32.to_le_bytes());
+        bytes.extend((streams as u32).to_le_bytes());
+        bytes.extend((directory as u32).to_le_bytes());
+        bytes.extend([0; 16]);
+        for index in 0..streams {
+            let (kind, size, rva) = if index == 0 {
+                (5u32, 4u32, memory_at)
+            } else {
+                (4, (4 + module_entries * 108) as u32, modules_at)
+            };
+            bytes.extend(kind.to_le_bytes());
+            bytes.extend(size.to_le_bytes());
+            bytes.extend((rva as u32).to_le_bytes());
+        }
+        bytes.extend(u32::MAX.to_le_bytes());
+        for _ in 0..module_entries {
+            let mut module = vec![0; 108];
+            module[20..24].copy_from_slice(&(name_at as u32).to_le_bytes());
+            bytes.extend(module);
+        }
+        bytes.extend(u32::MAX.to_le_bytes());
+        bytes.extend(65_534u32.to_le_bytes());
+        bytes.extend(std::iter::repeat_n([b'A', 0], 32_767).flatten());
+
+        let started = std::time::Instant::now();
+        let report = inspect(&bytes);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let kept: usize = report.extra_text.iter().map(String::len).sum();
+        assert!(kept <= 1024 * 1024 + 65_534, "{kept} bytes of module names");
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("module names were read up to"))
+        );
+        assert_eq!(property(&report, "Memory ranges"), "4294967295 (0 bytes)");
     }
 }
