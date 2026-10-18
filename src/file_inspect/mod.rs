@@ -22,6 +22,7 @@ mod java;
 mod macho;
 mod onenote;
 mod ordinals;
+mod pcap;
 mod pe;
 mod pe_extra;
 mod rtf;
@@ -253,6 +254,10 @@ pub fn inspect_bytes(bytes: &[u8], path: String, max_entries: usize) -> Result<F
         attach_document(&mut report, document);
     } else if onenote::is_onenote(bytes) {
         let document = onenote::inspect(bytes);
+        report.format = document.kind.clone();
+        attach_document(&mut report, document);
+    } else if pcap::is_pcap(bytes) {
+        let document = pcap::inspect(bytes);
         report.format = document.kind.clone();
         attach_document(&mut report, document);
     } else if evtx::is_evtx(bytes) {

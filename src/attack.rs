@@ -42,6 +42,11 @@ const HEURISTICS: &[(&str, &[&str])] = &[
     // Event logs (file_inspect::evtx).
     ("(audit log cleared)", &["T1070.001"]),
     ("(event log cleared)", &["T1070.001"]),
+    // Packet captures (file_inspect::pcap).
+    (
+        "cleartext http request to an ip address host",
+        &["T1071.001"],
+    ),
     // Lookalike domains (homoglyph).
     ("possible homoglyph", &["T1583.001"]),
 ];

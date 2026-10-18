@@ -24,6 +24,12 @@ changes must be called out explicitly. Tags are immutable.
   shortcuts, archives and OLE files are flagged as lure payloads. Script text
   feeds IOC extraction. Embedded file names are not decoded. Tested against
   the MS-ONESTORE structure with synthetic files only.
+- `file inspect` reads packet captures (pcap and pcapng, including
+  nanosecond timestamps): link types, packet and byte counts, time range, top
+  conversations and service ports, DNS question names, HTTP hosts and URLs,
+  and TLS ClientHello server names. Cleartext HTTP requests to an IP address
+  are flagged. Names and addresses feed IOC extraction. Streams are not
+  reassembled. Tested with synthetic captures only.
 - TLSH fuzzy hashes: `hash tlsh` and `hash compare-tlsh`, a `tlsh` field in
   report hashes (omitted for inputs under 50 bytes or too uniform), and
   `tlsh_distance` in `diff`. Digests and distances match py-tlsh 5.0.0.
