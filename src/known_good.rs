@@ -25,7 +25,7 @@ pub struct KnownHashes {
 
 fn decode<const N: usize>(hex: &str) -> Option<[u8; N]> {
     let mut output = [0_u8; N];
-    for (byte, pair) in output.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+    for (byte, pair) in output.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
         *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
     }
     Some(output)
