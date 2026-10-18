@@ -676,6 +676,8 @@ pub enum RulesCommand {
     ExportYara(RulesPathArgs),
     /// Convert a supported subset of YARA rules to Banshee TOML
     ImportYara(RulesPathArgs),
+    /// Convert Sigma rules to content-matching Banshee TOML (field names are ignored)
+    ImportSigma(RulesPathArgs),
     /// Print the built-in starter rule pack as TOML, or list its rules
     Builtin(RulesBuiltinArgs),
 }

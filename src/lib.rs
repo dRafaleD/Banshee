@@ -764,6 +764,21 @@ pub fn run_with(cli: Cli) -> Result<RunOutcome> {
                 }
                 report_conversion(&conversion, "Banshee TOML")?;
             }
+            RulesCommand::ImportSigma(args) => {
+                let conversion = rules::sigma::import_file(&args.path)?;
+                if conversion.converted == 0 {
+                    anyhow::bail!(
+                        "no Sigma rules could be converted: {}",
+                        conversion
+                            .skipped
+                            .iter()
+                            .map(|rule| format!("{}: {}", rule.rule, rule.reason))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    );
+                }
+                report_conversion(&conversion, "Banshee TOML")?;
+            }
             RulesCommand::Builtin(args) => {
                 if args.list {
                     let report = rules::validate_source(rules::BUILTIN_RULES)?;

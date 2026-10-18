@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use regex::bytes::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
+pub mod sigma;
 pub mod yara;
 
 #[cfg(test)]

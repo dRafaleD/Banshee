@@ -631,6 +631,22 @@ being approximated. All 60 rules of the AsphDex YARA library convert, and the
 converted rules give the same results as YARA on its 520 positive, negative
 and limitation fixtures and its benign corpus.
 
+### Sigma import
+
+`banshee rules import-sigma rules.yml` converts Sigma rules into Banshee TOML.
+Sigma matches fields of parsed log events, while Banshee matches content, so
+field names are ignored and each field's values are searched anywhere in the
+scanned text. Converted rules are therefore broader than the originals; use
+them on exported logs, scripts and command lines, and review matches. The
+import supports `contains`, `startswith`, `endswith`, `all`, `re`, `cased`
+and `windash`, `*` and `?` wildcards, keyword lists, and conditions built from
+`and`, `or`, parentheses, `1 of` and `all of` (each `or` branch becomes its own
+rule). `not`, aggregations, `timeframe`, `base64`/`base64offset`, `cidr`, null
+checks and numeric comparisons skip the rule with a reason. Levels map to
+severities, `status` to confidence, `attack.tNNNN` tags to ATT&CK IDs, and the
+log source to the category. The YAML reader covers the subset Sigma uses and
+needs no extra dependency.
+
 `category`, `confidence` (`low`, `medium`, or `high`), `references`, and
 `attack` are reporting metadata only. `attack` accepts up to 16 unique MITRE
 ATT&CK tactic (`TA0002`), technique (`T1059`) or sub-technique (`T1059.001`)

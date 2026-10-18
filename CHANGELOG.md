@@ -35,6 +35,13 @@ changes must be called out explicitly. Tags are immutable.
   the main module, captured memory and the exception record. A dump of
   `lsass.exe` is flagged as a credential-theft artifact. Checked against
   real Windows Error Reporting crash dumps.
+- `rules import-sigma` converts Sigma rules into content-matching Banshee
+  TOML: values of every field are searched anywhere in the content (field
+  names are ignored), `or` and `1 of` branches become separate rules, and
+  constructs without a content equivalent (`not`, aggregations, `timeframe`,
+  `base64`, `cidr`, null checks) skip the rule with a reason. Levels, status,
+  ATT&CK tags, references and the log source carry over as metadata. Tested
+  with hand-written rules; not yet run against the SigmaHQ repository.
 - `timeline PATH...` merges timestamps from local files into one sorted
   timeline (text, JSON or CSV): file modification times, PE build stamps,
   email Date headers, shortcut target times, event log and capture ranges

@@ -121,6 +121,7 @@ banshee rules scan --builtin-rules --file update.ps1
 banshee report suspicious.ps1 --builtin-rules --format markdown
 banshee rules export-yara examples/rules.toml --output banshee.yar
 banshee rules import-yara community.yar --output imported.toml
+banshee rules import-sigma proc_creation_win_susp.yml --output sigma.toml   # field names ignored
 banshee rules validate examples/rules.toml --json
 cat suspicious.log | banshee rules scan --rules examples/rules.toml
 banshee rules scan --rules examples/rules.toml --file payload.bin --fail-on-findings
