@@ -50,7 +50,7 @@ try {
         Copy-Item -LiteralPath $SbomPath -Destination (Join-Path $stage 'banshee.sbom.json')
         Copy-Item -LiteralPath $SbomPath -Destination (Join-Path $output "$name.sbom.json")
     }
-    foreach ($document in @('README.md', 'LICENSE', 'SECURITY.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'ROADMAP.md')) {
+    foreach ($document in @('README.md', 'README.tr.md', 'LICENSE', 'SECURITY.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'ROADMAP.md')) {
         Copy-Item -LiteralPath (Join-Path $repoRoot $document) -Destination $stage
     }
     Copy-Item -LiteralPath (Join-Path $repoRoot 'examples') -Destination $stage -Recurse

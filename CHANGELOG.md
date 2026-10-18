@@ -26,6 +26,9 @@ changes must be called out explicitly. Tags are immutable.
   them in Punycode; Punycode domains are decoded for review. Domains that mix
   Latin with Cyrillic, Greek or Armenian letters, or read as an ASCII name,
   carry a "possible homoglyph" detail and are medium-severity report findings.
+- Documentation: `docs/WALKTHROUGH.md` follows a harmless phishing email
+  from inspection to evidence, diff and STIX export, and `README.tr.md` is a
+  Turkish guide. Release archives include both.
 
 ### Changed
 

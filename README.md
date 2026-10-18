@@ -15,6 +15,7 @@ Analysis runs locally without uploading your inputs.
 
 [Quick start](#quick-guide) · [Capabilities](#choose-a-workflow) ·
 [Install](#build) · [Command examples](examples/usage.md) ·
+[Walkthrough](docs/WALKTHROUGH.md) · [Türkçe](README.tr.md) ·
 [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 Development guides: [installation](docs/INSTALLATION.md),
