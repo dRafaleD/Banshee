@@ -595,7 +595,7 @@ case_insensitive = true
 
 ### Built-in rule pack
 
-`--builtin-rules` applies a starter pack of about 35 rules compiled into
+`--builtin-rules` applies a starter pack of 51 rules compiled into
 Banshee, so `rules scan`, `report`, `scan` and `evidence create` work without a
 rule file. The pack covers PowerShell cradles and encoded commands, LOLBin
 downloads (certutil, mshta, regsvr32, rundll32, bitsadmin), shadow-copy

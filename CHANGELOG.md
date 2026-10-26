@@ -7,9 +7,11 @@ changes must be called out explicitly. Tags are immutable.
 
 ### Added
 
-- A built-in starter rule pack of 35 rules (PowerShell, LOLBins, ransomware
-  preparation, Defender tampering, credential dumping, Office scripts, web
-  shells, Unix reverse shells, web-service C2 and UPX), each with category,
+- A built-in starter rule pack of 51 rules (PowerShell, LOLBins, ransomware
+  preparation, Defender tampering, credential dumping, persistence, firewall
+  and UAC tampering, Office scripts, web
+  shells, Unix reverse shells and persistence, cloud metadata, web-service C2
+  and UPX), each with category,
   confidence and ATT&CK IDs. `--builtin-rules` applies it in `rules scan`,
   `report`, `scan` and `evidence create`; `rules builtin` prints it as TOML
   or lists it with `--list`.
