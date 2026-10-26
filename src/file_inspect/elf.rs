@@ -395,15 +395,18 @@ fn parse_elf_dynamic(
                 .push("ELF dynamic-table offset overflowed".to_owned());
             break;
         };
+        let value_offset = offset.checked_add(entry_size / 2);
         let (tag, value) = if bits == 64 {
             (
                 read_u64(bytes, offset, little),
-                read_u64(bytes, offset + 8, little),
+                value_offset.and_then(|at| read_u64(bytes, at, little)),
             )
         } else {
             (
                 read_u32(bytes, offset, little).map(u64::from),
-                read_u32(bytes, offset + 4, little).map(u64::from),
+                value_offset
+                    .and_then(|at| read_u32(bytes, at, little))
+                    .map(u64::from),
             )
         };
         let (Some(tag), Some(value)) = (tag, value) else {
@@ -605,4 +608,25 @@ fn elf_machine(machine: u16) -> String {
         _ => return format!("unknown (0x{machine:04X})"),
     }
     .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inspect_elf;
+
+    #[test]
+    fn dynamic_table_offset_near_usize_max_does_not_overflow() {
+        let mut bytes = vec![0u8; 64 + 56];
+        bytes[..4].copy_from_slice(b"\x7fELF");
+        bytes[4] = 2; // 64-bit
+        bytes[5] = 1; // little endian
+        bytes[6] = 1;
+        bytes[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
+        bytes[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+        bytes[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+        bytes[64..68].copy_from_slice(&2u32.to_le_bytes()); // PT_DYNAMIC
+        bytes[72..80].copy_from_slice(&(u64::MAX - 3).to_le_bytes()); // p_offset
+        bytes[96..104].copy_from_slice(&16u64.to_le_bytes()); // p_filesz
+        let _ = inspect_elf(&bytes);
+    }
 }
