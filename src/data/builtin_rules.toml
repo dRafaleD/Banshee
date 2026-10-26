@@ -368,6 +368,170 @@ category = "command-and-control"
 confidence = "medium"
 attack = ["T1090.003"]
 
+# --- Additional Windows tradecraft ------------------------------------------------
+
+[[rules]]
+id = "builtin.lolbin.wmic-process-create"
+description = "WMIC creates a process"
+severity = "medium"
+pattern = '(?i)wmic(?:\.exe)?\s[^\r\n]{0,80}process\s+call\s+create'
+tags = ["wmi","lolbin"]
+category = "execution"
+confidence = "medium"
+attack = ["T1047"]
+
+[[rules]]
+id = "builtin.lolbin.msiexec-remote"
+description = "msiexec installs a package from a remote URL"
+severity = "high"
+pattern = '(?i)msiexec(?:\.exe)?\s[^\r\n]{0,40}/[iq][a-z]*\s+"?https?://'
+tags = ["lolbin","download"]
+category = "defense-evasion"
+confidence = "high"
+attack = ["T1218.007"]
+
+[[rules]]
+id = "builtin.lolbin.cmstp-inf"
+description = "cmstp runs an INF file silently"
+severity = "medium"
+pattern = '(?i)cmstp(?:\.exe)?\s[^\r\n]{0,40}/(?:s|au)\b[^\r\n]{0,60}\.inf'
+tags = ["lolbin"]
+category = "defense-evasion"
+confidence = "medium"
+attack = ["T1218.003"]
+
+[[rules]]
+id = "builtin.credential.registry-hive-save"
+description = "Registry hive holding credentials saved to a file"
+severity = "high"
+pattern = '(?i)\breg(?:\.exe)?\s+save\s+hklm\\(?:sam|system|security)\b'
+tags = ["credential-dumping"]
+category = "credential-access"
+confidence = "high"
+attack = ["T1003.002"]
+
+[[rules]]
+id = "builtin.credential.ntds-dit"
+description = "Reference to the Active Directory database ntds.dit"
+severity = "medium"
+pattern = '(?i)\bntds\.dit\b'
+tags = ["credential-dumping","active-directory"]
+category = "credential-access"
+confidence = "medium"
+attack = ["T1003.003"]
+
+[[rules]]
+id = "builtin.credential.browser-login-data"
+description = "Path to a browser saved-password database"
+severity = "medium"
+pattern = '(?i)\\(?:Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave-Browser)\\User Data\\[^\r\n"]{0,40}\\Login Data'
+tags = ["stealer","browser"]
+category = "credential-access"
+confidence = "medium"
+attack = ["T1555.003"]
+
+[[rules]]
+id = "builtin.persistence.local-admin-add"
+description = "User added to the local Administrators group"
+severity = "high"
+pattern = '(?i)\bnet1?(?:\.exe)?\s+localgroup\s+"?administrators"?\s+[^\r\n]{1,40}\s/add'
+tags = ["account"]
+category = "persistence"
+confidence = "high"
+attack = ["T1098"]
+
+[[rules]]
+id = "builtin.persistence.new-service"
+description = "Windows service created from the command line"
+severity = "medium"
+pattern = '(?i)\bsc(?:\.exe)?\s+(?:\\\\[^\s]+\s+)?create\s+\S+\s+[^\r\n]{0,60}binpath='
+tags = ["service"]
+category = "persistence"
+confidence = "medium"
+attack = ["T1543.003"]
+
+[[rules]]
+id = "builtin.evasion.firewall-disable"
+description = "Windows firewall profile turned off"
+severity = "high"
+pattern = '(?i)netsh(?:\.exe)?\s+advfirewall\s+set\s+\w+\s+state\s+off'
+tags = ["firewall"]
+category = "defense-evasion"
+confidence = "high"
+attack = ["T1562.004"]
+
+[[rules]]
+id = "builtin.evasion.uac-disable"
+description = "User Account Control disabled through the registry"
+severity = "high"
+pattern = '(?i)\breg(?:\.exe)?\s+add\s+[^\r\n]{0,120}\\Policies\\System[^\r\n]{0,60}/v\s+EnableLUA[^\r\n]{0,30}/d\s+0'
+tags = ["uac"]
+category = "defense-evasion"
+confidence = "high"
+attack = ["T1548.002"]
+
+[[rules]]
+id = "builtin.script.office-dde-command"
+description = "Office DDE field that launches a command interpreter"
+severity = "high"
+pattern = '(?i)DDE(?:AUTO)?\s+[^\r\n]{0,80}(?:cmd|powershell)(?:\.exe)?'
+tags = ["office","dde"]
+category = "execution"
+confidence = "high"
+attack = ["T1559.002"]
+
+# --- Additional Unix and cloud tradecraft -----------------------------------------
+
+[[rules]]
+id = "builtin.unix.cron-append"
+description = "Crontab rewritten from a pipeline to add a job"
+severity = "high"
+pattern = '\(\s*crontab\s+-l[^\r\n]{0,200}\)\s*\|\s*crontab\s+-'
+tags = ["cron"]
+category = "persistence"
+confidence = "high"
+attack = ["T1053.003"]
+
+[[rules]]
+id = "builtin.unix.ssh-authorized-keys-append"
+description = "Key appended to an authorized_keys file"
+severity = "medium"
+pattern = '>>\s*\S*\.ssh/authorized_keys'
+tags = ["ssh"]
+category = "persistence"
+confidence = "medium"
+attack = ["T1098.004"]
+
+[[rules]]
+id = "builtin.unix.ld-preload-file"
+description = "Reference to /etc/ld.so.preload"
+severity = "medium"
+pattern = '/etc/ld\.so\.preload'
+tags = ["rootkit"]
+category = "persistence"
+confidence = "low"
+attack = ["T1574.006"]
+
+[[rules]]
+id = "builtin.unix.history-tamper"
+description = "Shell history disabled or cleared"
+severity = "low"
+pattern = '(?i)\b(?:history\s+-c|unset\s+HISTFILE|HISTFILE=/dev/null)\b'
+tags = ["history"]
+category = "defense-evasion"
+confidence = "low"
+attack = ["T1070.003"]
+
+[[rules]]
+id = "builtin.cloud.aws-metadata-credentials"
+description = "AWS instance metadata credentials endpoint"
+severity = "medium"
+pattern = '169\.254\.169\.254/latest/meta-data/iam/security-credentials'
+tags = ["aws","ssrf"]
+category = "credential-access"
+confidence = "medium"
+attack = ["T1552.005"]
+
 # --- Binaries --------------------------------------------------------------------
 
 [[rules]]

