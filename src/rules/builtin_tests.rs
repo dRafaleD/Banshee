@@ -297,6 +297,7 @@ fn builtin_pack_stays_quiet_on_ordinary_text() {
         "netsh advfirewall show allprofiles",
         "crontab -l",
         "wmic os get caption",
+        "CmdletsToExport = 'Get-EventLog', 'Clear-EventLog', 'Write-EventLog'",
     ];
     for text in ordinary {
         let report = scan_source(BUILTIN_RULES, text.as_bytes()).unwrap();
