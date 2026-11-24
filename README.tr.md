@@ -18,10 +18,8 @@ Bu sayfa kısa bir Türkçe rehberdir. Tüm seçenekler, sınırlar ve ayrıntı
 için [İngilizce README](README.md) esas kaynaktır.
 
 > [!WARNING]
-> **Alfa sürüm.** Banshee aktif olarak geliştiriliyor. Eksik, hatalı ya da
-> yanlış davranışlar görülebilir; komutlar, çıktı biçimleri ve kural
-> sözdizimi kararlı sürümden önce değişebilir. Bulgular analiste yardımcı
-> sinyallerdir, kesin bir güvenlik hükmü değildir.
+> Komutlar, çıktı biçimleri ve kural sözdizimi sürümler arasında değişebilir.
+> Bulguları inceleme ipucu olarak değerlendir ve karar vermeden önce doğrula.
 
 ## Ne işe yarar?
 

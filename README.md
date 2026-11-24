@@ -2,7 +2,6 @@
 
 # Banshee
 
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-f59e0b)](https://github.com/dRafaleD/Banshee)
 [![CI](https://github.com/dRafaleD/Banshee/actions/workflows/ci.yml/badge.svg)](https://github.com/dRafaleD/Banshee/actions/workflows/ci.yml)
 [![Primary language: Rust](https://img.shields.io/badge/primary%20language-Rust-dea584)](https://github.com/dRafaleD/Banshee)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
@@ -24,10 +23,8 @@ Development guides: [installation](docs/INSTALLATION.md),
 [ongoing security checks](docs/SECURITY_CHECKS.md).
 
 > [!WARNING]
-> **Alpha / early draft.** Banshee is under active development. Expect incomplete,
-> broken, or incorrect behavior; commands, output formats, rule syntax, and
-> limits may change before a stable release. Treat its findings as analyst
-> assistance—not as a final security verdict.
+> Commands, report formats, and rule syntax may change between releases.
+> Treat findings as investigative leads and verify them before making a security decision.
 
 ## Choose a workflow
 
@@ -160,7 +157,7 @@ target/release/banshee export case-evidence --format stix --output observables.s
   ordering, and per-file status reporting.
 - Work offline with pipe-friendly human, JSON, JSONL, and CSV output.
 
-## Capabilities (alpha)
+## Capabilities
 
 The initial foundation includes the following commands:
 
@@ -268,8 +265,7 @@ build. Enable it once under Settings > Pages > Source: GitHub Actions.
 
 ### Prebuilt packages
 
-[Banshee v0.3.1](https://github.com/dRafaleD/Banshee/releases/tag/v0.3.1) is
-published as an alpha pre-release with packages for five platforms. Each archive
+[Banshee v0.3.1](https://github.com/dRafaleD/Banshee/releases/tag/v0.3.1) has packages for five platforms. Each archive
 holds the binary, shell completions, a manual page, examples and documentation.
 
 | Platform | Archive |
@@ -329,8 +325,7 @@ Build from source if your platform has no package, or to use a modified tree.
   also need Python 3. See the [installation guide](docs/INSTALLATION.md).
 
 > [!NOTE]
-> Banshee has not been published to crates.io during the alpha phase, so
-> `cargo install banshee` is not available yet. Build from a clone instead.
+> Build from a clone to install Banshee with Cargo.
 
 ```bash
 git clone https://github.com/dRafaleD/Banshee.git
